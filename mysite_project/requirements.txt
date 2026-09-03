@@ -1,0 +1,26 @@
+# Core
+Django==6.1
+channels==4.3.2
+daphne==4.2.3
+channels_redis==4.3.0
+
+# Database
+psycopg2-binary==2.9.12
+
+# REST API
+djangorestframework==3.18.0
+
+# Authentication
+PyJWT==2.13.0
+
+# Security
+bleach==6.4.0
+
+# Logging
+structlog==26.1.0
+
+# Error Tracking
+sentry-sdk==2.68.1
+
+# Configuration
+python-dotenv==1.2.3

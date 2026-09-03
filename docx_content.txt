@@ -1,0 +1,268 @@
+
+PROMPT KẾ HOẠCH ĐỒ ÁN
+Real-time Team Chat & Notification Platform — Django Channels + WebSocket
+0. Các quyết định chốt cứng (không để tự chọn lại giữa chừng)
+Domain: Real-time Team Chat & Notification Platform (mini Slack/Discord) — group chat, tin nhắn trực tiếp, thông báo real-time. Không đổi sang dashboard/feed đơn thuần.
+ASGI Server: Daphne — reference server chính thức của dự án Django Channels, ổn định và có tài liệu tốt nhất để demo/giải thích.
+Channel Layer: Redis (channels_redis) là MUST — bắt buộc để group_send hoạt động xuyên nhiều worker/process, không dùng In-Memory Channel Layer (chỉ chạy được 1 process, không thể load test đúng thực tế).
+Xác thực WebSocket: Token/JWT gửi kèm khi handshake (query string hoặc subprotocol), xác thực tại AuthMiddleware tùy biến TRƯỚC khi vào consumer — không cho phép kết nối anonymous vào bất kỳ consumer nghiệp vụ nào.
+Đảm bảo thứ tự tin nhắn: mỗi Conversation có sequence_number tăng dần (do DB transaction cấp phát, không do client tự đánh số) — client sắp xếp hiển thị theo sequence_number, không theo thời điểm nhận được qua mạng.
+Idempotency: mỗi tin nhắn gửi kèm client_message_id (UUID do client sinh); server dùng unique constraint để chặn tạo trùng khi client retry do mất mạng.
+Presence là state machine có vòng lặp, không tuyến tính: online ⇄ away ⇄ offline, chuyển trạng thái qua heartbeat timeout và quay lại online ngay khi có connection/heartbeat mới — xem chi tiết mục 4.
+Lưu ý phạm vi & phương án dự phòng (đọc trước khi bắt đầu code):
+Bản kế hoạch này có phạm vi vừa-lớn (MUST HAVE đã gồm ASGI, Channel Layer, REST API, Auth, Logging, Sentry, Load test — 11 dòng MUST). Nếu quỹ thời gian dưới 4 tuần, hãy làm theo đúng thứ tự Phase ở mục 12 và DỪNG lại ở Phase đã hoàn chỉnh gần nhất — không cố làm dở dang Phase tiếp theo.
+Toàn bộ mục OPTIONAL (full observability stack, multi-worker scaling) chỉ nên làm SAU KHI toàn bộ MUST HAVE đã chạy ổn định và demo được — đây là điểm cộng, không phải điều kiện cần.
+1. Mục tiêu dự án
+Xây dựng nền tảng chat nhóm + thông báo real-time bằng Django Channels, có khả năng:
+Broadcast tin nhắn tức thời tới nhiều client trong cùng nhóm, đảm bảo đúng thứ tự và không trùng lặp dù mạng không ổn định.
+Theo dõi trạng thái kết nối (presence) chính xác kể cả khi người dùng mở nhiều thiết bị/tab cùng lúc.
+Đồng bộ lại đúng dữ liệu bị lỡ khi client mất kết nối và quay lại (offline sync).
+Chứng minh bằng demo trực tiếp với số liệu định lượng rằng hệ thống chịu được nhiều kết nối đồng thời và xử lý đúng các tình huống lỗi mạng thực tế.
+2. Phạm vi chức năng (Functional Scope)
+2.1 Module người dùng
+Đăng ký / đăng nhập, nhận token xác thực dùng cho cả REST API và WebSocket handshake.
+Danh sách hội thoại (group chat + tin nhắn trực tiếp 1-1), xem lịch sử tin nhắn (REST API, phân trang).
+Gửi/nhận tin nhắn real-time qua WebSocket trong hội thoại đang mở.
+Typing indicator (báo đang gõ) — có debounce, không gửi liên tục gây spam kênh.
+Read receipt (đã xem tin nhắn tới đâu).
+Presence: hiển thị online/away/offline của thành viên khác.
+Nhận thông báo real-time (tin nhắn mới, mention) qua kênh notification riêng kể cả khi không mở đúng conversation đó.
+Đồng bộ lại tin nhắn bị lỡ khi mất mạng và kết nối lại.
+2.2 Module quản trị (Admin/Staff)
+Quản lý user, tạo/xóa group, gỡ thành viên vi phạm.
+Xem thống kê kết nối real-time hiện tại (số connection đang mở, số group active).
+2.3 Module nghiệp vụ lõi (nơi WebSocket/Channels phát huy tác dụng)
+Connection lifecycle: connect → authenticate → join group(s) → heartbeat định kỳ → disconnect/timeout → dọn dẹp UserConnection.
+Message fanout có thứ tự: consumer nhận tin nhắn → ghi DB trong transaction (cấp sequence_number) → group_send qua Channel Layer → các consumer khác broadcast tới client của mình.
+Offline sync: khi reconnect, client gửi last_seen_sequence cho mỗi conversation đang theo dõi, server trả về đúng các tin nhắn bị miss.
+Multi-device presence: presence chỉ đổi offline khi KHÔNG còn UserConnection nào active của user đó.
+3. Data Model / ERD (thiết kế trước khi code)
+Các entity chính, cần thiết kế đầy đủ PK, FK, unique constraint, index trước khi viết model Django:
+User, Conversation (type: direct/group), ConversationMember, Message, MessageReadReceipt, Notification, UserConnection (device_id, channel_name, connected_at, last_heartbeat), PresenceStatus.
+Ràng buộc DB bắt buộc:
+Unique (conversation_id, sequence_number) trên Message: đảm bảo thứ tự tin nhắn nhất quán, sequence_number do DB cấp phát trong transaction (VD: dùng SELECT ... FOR UPDATE trên Conversation.last_sequence rồi tăng dần), không để client tự sinh.
+Unique (message_id, user_id) trên MessageReadReceipt: 1 user chỉ có đúng 1 bản ghi đã đọc cho 1 message, tránh insert trùng khi client gửi lại sự kiện đọc.
+Unique (conversation_id, sender_id, client_message_id) trên Message: đây là cơ chế idempotency chính — chặn tạo tin nhắn trùng khi client retry do mất mạng.
+Index trên UserConnection.last_heartbeat để job quét timeout chạy hiệu quả.
+Index trên (conversation_id, sequence_number) để truy vấn lịch sử/offline-sync nhanh.
+4. Ràng buộc & quy tắc nghiệp vụ (Constraints)
+1. Presence lifecycle: online ⇄ away ⇄ offline. Không hạ trạng thái ngay khi mất 1 heartbeat — chỉ chuyển away sau X giây không heartbeat, chuyển offline sau Y giây (Y > X), và quay lại online NGAY khi có connect/heartbeat mới. Đây là vòng lặp, không phải chuyển 1 chiều.
+2. Presence chỉ offline khi KHÔNG còn UserConnection nào active của user (multi-device: đóng 1 tab không kéo user offline nếu còn tab khác).
+3. sequence_number của Message do DB cấp phát trong transaction, không tin tưởng giá trị client tự gửi.
+4. Idempotency: mọi tin nhắn phải có client_message_id; nếu trùng, trả về bản ghi đã tồn tại thay vì tạo mới hoặc báo lỗi.
+5. Rate limiting: giới hạn số tin nhắn/giây trên mỗi connection để chống spam; giới hạn kích thước tin nhắn tối đa (VD: 5000 ký tự).
+6. Authorization: chỉ user thuộc ConversationMember mới được join group Channels tương ứng và nhận broadcast của group đó.
+7. Offline sync trả tin nhắn theo đúng khoảng (last_seen_sequence, current_sequence], không trả trùng, không thiếu.
+8. Mọi lỗi nghiệp vụ (rate limit, authorization, duplicate) log có cấu trúc kèm connection_id, user_id, conversation_id.
+5. Kiến trúc kỹ thuật (WebSocket & Channels)
+5.1 Sơ đồ luồng dữ liệu
+Client → ASGI (Daphne) → AuthMiddleware (xác thực token) → Consumer → ghi DB (transaction, cấp sequence_number) → Channel Layer (Redis Pub/Sub) → group_send → các consumer khác trong group → đẩy về client tương ứng.
+5.2 Thiết kế Consumer
+Mỗi Conversation ánh xạ tới 1 Channels Group riêng; consumer khi connect sẽ join group của các conversation user đang là thành viên.
+Heartbeat: client gửi ping định kỳ (VD: mỗi 15-20 giây); server cập nhật last_heartbeat; job nền quét timeout để hạ presence.
+Notification dùng group riêng theo user (user_<id>) độc lập với group conversation, đảm bảo nhận được thông báo dù không mở đúng room.
+5.3 Offline Sync
+Khi connect/reconnect, client gửi last_seen_sequence cho từng conversation đang theo dõi; server truy vấn Message có sequence_number lớn hơn và trả về theo thứ tự.
+5.4 Ghi chú về khả năng mở rộng (Scaling)
+Kiến trúc dùng Redis Channel Layer nên về lý thuyết chạy được nhiều ASGI worker/instance cùng lúc; demo multi-instance thật là OPTIONAL/ADVANCED, không bắt buộc để đạt điểm tối đa.
+6. Bảo mật (Security)
+Không cho phép kết nối WebSocket ẩn danh vào consumer nghiệp vụ — xác thực token bắt buộc tại AuthMiddleware trước khi accept.
+Rate limiting theo connection/user để chống spam và DoS đơn giản qua WebSocket.
+Input sanitization nội dung tin nhắn (chống XSS khi hiển thị lại trên client).
+Kiểm tra quyền thành viên (ConversationMember) trước khi cho join bất kỳ group nào — không suy diễn quyền từ dữ liệu client gửi lên.
+Không hard-code secret trong source code — dùng environment variables (.env.example) cho token secret, Redis, DB credentials.
+7. Công nghệ sử dụng
+Đánh dấu rõ MUST HAVE (bắt buộc), SHOULD HAVE (nên có nếu đủ thời gian), OPTIONAL (nâng cao) — để nếu thiếu thời gian vẫn không ảnh hưởng phần lõi:
+Thành phần
+Công nghệ
+Mức độ
+Backend framework
+Django
+MUST
+Real-time framework
+Django Channels
+MUST
+ASGI Server
+Daphne (reference server chính thức của dự án Channels)
+MUST
+Database
+PostgreSQL
+MUST
+Channel Layer (broadcast đa worker)
+Redis (channels_redis)
+MUST
+REST API phụ trợ (auth, lịch sử hội thoại)
+Django REST Framework
+MUST
+Xác thực WebSocket
+Token/JWT qua AuthMiddleware tùy biến
+MUST
+Structured Logging
+structlog (JSON format)
+MUST
+Error Tracking
+Sentry
+MUST
+Background job (push notification async, email digest)
+Celery (worker + beat)
+SHOULD
+WebSocket Load Test
+Locust (locust-plugins websocket) hoặc script asyncio/websockets tự viết
+MUST
+Container hóa
+Docker Compose
+MUST
+Full Observability stack (Trace/Metric dashboard)
+OpenTelemetry + Tempo + Prometheus + Grafana
+OPTIONAL (điểm cộng, không phải yêu cầu đề tài)
+Horizontal scaling nhiều ASGI worker
+Nhiều instance Daphne + Redis dùng chung
+OPTIONAL / ADVANCED
+
+8. Kiến trúc hạ tầng demo (Docker Compose)
+Services: web (Django + Daphne), db (PostgreSQL), redis (Channel Layer), celery-worker + celery-beat (nếu dùng push notification async), sentry (SaaS free tier hoặc self-host), load-test runner (Locust hoặc script riêng).
+8.1 Giới hạn tài nguyên
+Cấu hình mem_limit/cpus cho từng service trong docker-compose.yml, tránh tràn RAM/lag máy khi mở hàng trăm WebSocket connection để load test trên máy demo.
+8.2 Graceful Degradation
+Nếu Redis (Channel Layer) chết: WebSocket vẫn accept connect nhưng group_send lỗi phải được bắt riêng (try/except quanh group_send), log cảnh báo và báo lỗi có kiểm soát cho client — không để exception làm crash toàn bộ ASGI worker.
+9. Test Strategy & Acceptance Criteria định lượng
+9.1 Các lớp test bắt buộc
+Unit Test: model, business rule (rate limit, kích thước tin nhắn, quyền thành viên).
+Integration Test: REST API (auth, lịch sử hội thoại, danh sách notification).
+WebSocket Test: dùng channels.testing.WebsocketCommunicator để test connect/send/receive/disconnect ở mức consumer.
+Concurrency Test: nhiều connection cùng gửi tin nhắn vào 1 conversation → verify thứ tự sequence_number đúng, không mất/trùng.
+Load Test: theo Acceptance Criteria bên dưới.
+9.2 Acceptance Criteria định lượng cho Load Test
+200-500 concurrent WebSocket connections.
+0 tin nhắn bị mất, 0 tin nhắn trùng (nhờ idempotency) trong suốt bài test.
+Theo dõi và ghi nhận p50/p95/p99 fanout latency (từ lúc consumer nhận tin tới lúc group_send hoàn tất).
+Theo dõi error rate (%) và throughput (message/giây).
+Lưu ý khi trình bày: con số 200-500 concurrent connections là Acceptance Test target trên môi trường demo/local (máy cá nhân, resource giới hạn theo mục 8.1) — không phải cam kết SLA production. Nếu giảng viên hỏi, trả lời rõ đây là ngưỡng kiểm chứng tính đúng đắn của cơ chế ordering/idempotency/presence, không phải năng lực hạ tầng thật.
+10. Kịch bản test / demo trước giảng viên
+Chuẩn bị sẵn từng kịch bản, chạy trực tiếp và cho xem log/DB song song màn hình:
+#
+Kịch bản
+Mục đích chứng minh
+Công cụ quan sát
+1
+2 client cùng gửi tin nhắn vào 1 group ngay lập tức (script song song)
+Thứ tự tin nhắn đúng theo sequence_number, không mất/không đảo thứ tự
+So sánh sequence_number trong DB vs thứ tự client nhận được
+2
+Đóng tab đột ngột (không gửi close frame)
+Server phát hiện mất kết nối qua heartbeat timeout, chuyển presence sang offline đúng thời gian quy định
+Log connection.heartbeat_timeout, presence đổi trạng thái trên UI người khác
+3
+Client mất mạng, gửi lại đúng client_message_id khi có mạng lại
+Idempotency chặn tạo tin nhắn trùng
+DB chỉ có 1 bản ghi dù gửi 2 lần, log message.duplicate_ignored
+4
+Client reconnect sau khi mất mạng 30 giây, gửi last_seen_sequence
+Offline sync trả đúng các tin nhắn bị miss, không thiếu không thừa
+So sánh danh sách message trả về vs message thực đã gửi trong lúc offline
+5
+Load test 200-500 concurrent WebSocket connections gửi tin nhắn liên tục
+Hệ thống chịu tải theo số liệu p50/p95/p99 fanout latency, throughput, error rate
+Kết quả Locust/script load test
+6
+User cố join group mà mình không phải thành viên (sửa group_id thủ công)
+Authorization chặn đúng, không cho nhận broadcast của group lạ
+Log group.join_rejected, WS đóng kết nối với close code phù hợp
+7
+Gửi tin nhắn liên tục vượt rate limit (spam)
+Rate limiting chặn đúng, không crash server
+Log message.rate_limited, response error cho client
+8
+Tắt tạm thời Redis (channel layer) giữa demo
+WebSocket vẫn accept connect nhưng broadcast lỗi có kiểm soát, không crash toàn server (graceful degradation)
+Log cảnh báo nội bộ, Sentry ghi nhận lỗi broadcast riêng biệt với lỗi kết nối
+9
+1 user mở 2 tab (2 connection), đóng 1 tab
+Multi-device: user vẫn online vì còn 1 connection sống, chỉ offline khi đóng hết
+Bảng UserConnection còn 1 row active, presence vẫn online
+10
+User không đang mở conversation vẫn nhận được notification tin nhắn mới
+Kênh notification real-time tách biệt hoạt động đúng (không phụ thuộc phải đang xem đúng room)
+Badge/toast notification xuất hiện qua kênh riêng của user
+
+11. Error Handling & Failure Matrix
+Bảng hành vi kỳ vọng cho từng loại sự cố — dùng để thiết kế lẫn để trả lời câu hỏi phản biện của giảng viên:
+Failure
+Expected behavior
+Quan sát / Xử lý
+Client mất kết nối đột ngột (không close frame)
+Server phát hiện qua heartbeat timeout, không giữ connection ma vĩnh viễn
+Log connection.heartbeat_timeout; dọn UserConnection sau timeout
+Redis channel layer down
+WebSocket vẫn connect được, nhưng group broadcast fail có kiểm soát, không crash ASGI worker
+Log lỗi broadcast riêng; Sentry alert; client nhận thông báo lỗi rõ ràng
+Gửi trùng tin nhắn (duplicate client_message_id)
+Không tạo bản ghi Message thứ 2
+Idempotency check tại consumer trước khi insert DB
+Vượt rate limit gửi tin nhắn
+Reject tin nhắn vượt ngưỡng, không đóng kết nối trừ khi vi phạm nhiều lần liên tục
+Log message.rate_limited, response lỗi rõ ràng cho client
+Token xác thực không hợp lệ/hết hạn khi handshake
+Từ chối kết nối WebSocket ngay tại AuthMiddleware, không vào tới consumer
+Đóng kết nối với close code 4001 (custom), không lộ thông tin nội bộ
+Tin nhắn vượt kích thước cho phép
+Reject tại consumer trước khi lưu DB
+Log message.rejected.too_large
+User gửi group_id không thuộc về mình
+Từ chối join group, đóng kết nối group đó
+Log group.join_rejected, không broadcast được vào group lạ
+Nhiều tab/device cùng 1 user disconnect không đồng thời
+Chỉ chuyển offline khi TẤT CẢ connection của user đã đóng
+Đếm số UserConnection active theo user_id trước khi đổi presence
+
+12. Lộ trình theo Phase + Definition of Done
+Mỗi phase phải đạt điều kiện hoàn thành trước khi chuyển phase sau — tránh chạy quá nhanh khi phase trước còn lỗi. Nếu thiếu thời gian, dừng lại ở phase gần nhất đã hoàn chỉnh (xem mục 0):
+Phase
+Nội dung
+Điều kiện hoàn thành (Definition of Done)
+Phase 1
+Nền tảng: Django + Channels + ASGI (Daphne) + WebSocket echo cơ bản
+Django chạy dưới ASGI qua Daphne; client kết nối WebSocket và nhận lại echo; PostgreSQL + Redis kết nối được qua Docker Compose
+Phase 2
+Data model + REST API auth + persistence
+Migration thành công cho toàn bộ ERD ở mục 3; đăng nhập trả token; API lấy lịch sử conversation hoạt động; unit test model pass
+Phase 3
+Nghiệp vụ lõi real-time: group chat, ordering, idempotency, presence
+2 client join cùng group nhận broadcast đúng thứ tự (sequence_number); gửi trùng client_message_id không tạo bản ghi trùng; presence chuyển trạng thái đúng qua heartbeat
+Phase 4
+Offline sync + notification + rate limiting + security
+Reconnect đồng bộ đúng tin nhắn miss; kênh notification hoạt động độc lập; rate limit chặn spam; authorization chặn join group lạ
+Phase 5
+Test toàn diện + Load test
+Unit/Integration/WebSocket test (WebsocketCommunicator) pass; load test đạt Acceptance Criteria ở mục 9.2; toàn bộ 10 kịch bản demo ở mục 10 chạy được
+Phase 6
+Hoàn thiện & Demo
+README + docker-compose up chạy lại được từ đầu; ERD, Architecture Diagram, Deliverables đầy đủ; kịch bản demo đã luyện tập, có timing rõ ràng
+
+13. AI Development Rules (nếu dùng AI hỗ trợ code)
+Không tự ý thay đổi kiến trúc đã chốt ở mục 0 (Daphne, Redis Channel Layer, sequence_number do DB cấp).
+Không bỏ qua concurrency test / ordering test.
+Không tạo implementation giả để demo (mock che giấu lỗi thật, VD: hard-code sequence_number tăng dần ở phía client).
+Không hard-code dữ liệu nghiệp vụ.
+Code phải có validation và exception handling đầy đủ, đặc biệt quanh group_send và mọi thao tác Channel Layer.
+Mỗi module quan trọng phải có test đi kèm, bao gồm test riêng cho consumer (WebsocketCommunicator).
+Không viết toàn bộ project trong một lần — triển khai theo từng phase ở mục 12.
+Sau mỗi phase phải kiểm tra hệ thống chạy được (Definition of Done) trước khi sang phase kế tiếp.
+Khi sửa lỗi phải xác định root cause trước khi patch, đặc biệt với lỗi liên quan race condition/thứ tự tin nhắn.
+14. Deliverables cuối cùng
+Source code (kèm cấu trúc thư mục rõ ràng theo app Django/Channels).
+docker-compose.yml + .env.example.
+README.md hướng dẫn chạy lại từ đầu.
+ERD (mục 3) và Architecture Diagram (mục 5).
+API Documentation (REST endpoints + WebSocket message schema).
+Test Report (unit/integration/WebSocket/concurrency) và Load Test Report (số liệu mục 9.2).
+Demo Script (kịch bản mục 10) và Presentation Slides.
+15. Checklist đạt điểm tối đa
+Có bài toán kỹ thuật thật (đảm bảo thứ tự tin nhắn + idempotency + presence đa thiết bị), không chỉ mở WebSocket echo đơn giản.
+Connection lifecycle được xử lý đầy đủ: connect, heartbeat, timeout, disconnect, reconnect với offline sync.
+Acceptance Criteria định lượng đạt được và có report kèm số liệu (p95 latency, throughput, error rate).
+Failure Matrix (mục 11) được demo tối thiểu 5/8 trường hợp trực tiếp, bao gồm graceful degradation khi Redis chết.
+Security: không có kết nối WebSocket ẩn danh vào consumer nghiệp vụ, có rate limiting, có authorization theo thành viên.
+README + docker-compose up chạy lại được từ đầu, không cần sửa gì thêm.
+Deliverables đầy đủ theo mục 14.
+Trả lời được câu hỏi phản biện: vì sao chọn Redis Channel Layer thay vì In-Memory, vì sao sequence_number phải do DB cấp chứ không phải client, điều gì xảy ra nếu Redis chết giữa demo.
