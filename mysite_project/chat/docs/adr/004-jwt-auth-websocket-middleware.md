@@ -88,3 +88,19 @@ class TokenAuthMiddleware:
 
 ### Risks
 - Token expire khi connection đang mở → cần handle reconnect + refresh flow ở client
+
+---
+
+## Cập nhật (bản thực thi hiện tại)
+
+Token KHÔNG còn đi qua query string. Client mở kết nối bằng subprotocol:
+
+```js
+new WebSocket(url, ["chat.v1", accessToken]);
+```
+
+`TokenAuthMiddleware` đọc token từ `scope["subprotocols"]`, consumer
+`accept("chat.v1")`. Router còn được bọc thêm `AllowedHostsOriginValidator`
+để chặn Origin lạ. Token hết hạn giữa phiên: WS đóng với code 4001, client
+refresh token rồi reconnect, thất bại thì quay về màn hình đăng nhập và giữ
+lại draft đang gõ.

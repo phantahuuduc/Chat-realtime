@@ -19,6 +19,14 @@ class JWTAuthentication(authentication.BaseAuthentication):
 
     keyword = 'Bearer'
 
+    def authenticate_header(self, request):
+        """
+        Bắt buộc phải có. Thiếu nó, DRF trả 403 cho mọi lỗi xác thực thay vì
+        401 — client không nhận ra token hết hạn nên không bao giờ refresh,
+        và mọi request sau đó hỏng vĩnh viễn.
+        """
+        return f'{self.keyword} realm="api"'
+
     def authenticate(self, request):
         auth_header = request.headers.get('Authorization', '')
         if not auth_header.startswith(f'{self.keyword} '):

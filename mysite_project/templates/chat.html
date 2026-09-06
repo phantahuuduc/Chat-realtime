@@ -1,1729 +1,243 @@
-{% load static %}
-<!DOCTYPE html>
+{% load static %}<!DOCTYPE html>
 <html lang="vi">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CR7 UEFA Champions League — Real-Time Chat Platform</title>
-    <meta name="description" content="UEFA Champions League Moscow 2008 — Cristiano Ronaldo Real-Time Chat Platform powered by Django Channels & WebSocket">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        /* ================================================================
-           UEFA CHAMPIONS LEAGUE • MOSCOW 2008 RAIN OF GLORY DESIGN SYSTEM
-           Skills: ui-ux-pro-max, ui-styling, design-system, brand, banner-design
-           Theme: Atmospheric Moscow Torrential Rain, Paparazzi Flashbulbs,
-           3D Organic Lens Wet Dripping & Silver Trophy Specular Glints
-           ================================================================ */
-        :root {
-            --ucl-deep: #02040d;
-            --ucl-night: #040817;
-            --ucl-navy: #071026;
-            --ucl-glass-sidebar: rgba(2, 6, 18, 0.94);
-            --ucl-glass-header: rgba(3, 8, 24, 0.88);
-            --ucl-glass-bubble-rec: rgba(4, 10, 28, 0.82);
-            
-            --gold-light: #fef2d6;
-            --gold-primary: #e6be68;
-            --gold-rich: #d4af37;
-            --gold-dark: #9a7b20;
-            --gold-glow: rgba(212, 175, 55, 0.4);
-            --gold-glow-epic: rgba(255, 215, 0, 0.6);
-            --gold-border: rgba(212, 175, 55, 0.32);
-            --gold-border-bright: rgba(254, 242, 214, 0.7);
-            
-            --cr7-red: #c51e3a;
-            --cr7-red-glow: rgba(197, 30, 58, 0.5);
-            
-            --text-silver: #f4f6fb;
-            --text-muted: #8e9bb5;
-            --status-online: #2cd483;
-            
-            --font-display: 'Cinzel', serif;
-            --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
-            
-            --radius-sm: 8px;
-            --radius-md: 14px;
-            --radius-lg: 20px;
-            --radius-pill: 9999px;
-            --transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: var(--font-sans);
-            background: var(--ucl-deep);
-            color: var(--text-silver);
-            height: 100vh;
-            overflow: hidden;
-            user-select: none;
-        }
-
-        /* ================================================================
-           AUTH SCREEN
-           ================================================================ */
-        #authScreen {
-            position: fixed; inset: 0;
-            display: flex; align-items: center; justify-content: center;
-            background: radial-gradient(circle at center, #0a1334 0%, #02040d 100%);
-            z-index: 2000;
-            transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.6s ease;
-        }
-        #authScreen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
-
-        .auth-backdrop {
-            position: absolute; inset: 0;
-            background: url('/static/cr7_master.jpg') center center/cover no-repeat;
-            filter: blur(16px) brightness(0.25);
-            transform: scale(1.1);
-        }
-
-        .auth-card {
-            position: relative; z-index: 10;
-            background: rgba(3, 8, 24, 0.9);
-            backdrop-filter: blur(30px);
-            border: 1.5px solid var(--gold-border);
-            border-radius: var(--radius-lg);
-            padding: 2.6rem 2.4rem;
-            width: 100%; max-width: 430px;
-            box-shadow: 0 30px 90px rgba(0, 0, 0, 0.9), 0 0 50px var(--gold-glow);
-            text-align: center;
-            animation: card-appear 0.7s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        @keyframes card-appear {
-            from { opacity: 0; transform: translateY(20px) scale(0.96); }
-            to   { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        .auth-crest {
-            font-size: 2.4rem; margin-bottom: 0.2rem;
-            filter: drop-shadow(0 0 16px var(--gold-rich));
-            animation: crest-pulse 3s infinite alternate ease-in-out;
-        }
-        @keyframes crest-pulse {
-            from { transform: scale(0.96); filter: drop-shadow(0 0 10px var(--gold-rich)); }
-            to   { transform: scale(1.06); filter: drop-shadow(0 0 24px #ffd700); }
-        }
-        .auth-tagline {
-            font-family: var(--font-display);
-            font-size: 0.66rem; letter-spacing: 0.28em;
-            color: var(--gold-primary); text-transform: uppercase;
-            margin-bottom: 0.35rem;
-        }
-        .auth-title {
-            font-family: var(--font-display);
-            font-size: 1.65rem; font-weight: 800;
-            background: linear-gradient(135deg, #fff 15%, var(--gold-light) 50%, var(--gold-rich) 100%);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            letter-spacing: 0.05em; margin-bottom: 0.2rem;
-        }
-        .auth-sub { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1.6rem; }
-        .auth-tabs {
-            display: flex; background: rgba(2, 5, 15, 0.75);
-            border: 1px solid rgba(212, 175, 55, 0.25);
-            border-radius: var(--radius-pill); padding: 4px; margin-bottom: 1.4rem;
-        }
-        .auth-tabs button {
-            flex: 1; padding: 0.55rem 1rem; border: none; border-radius: var(--radius-pill);
-            background: transparent; color: var(--text-muted);
-            font-family: var(--font-sans); font-weight: 600; font-size: 0.85rem;
-            cursor: pointer; transition: var(--transition);
-        }
-        .auth-tabs button.active {
-            background: linear-gradient(135deg, var(--gold-rich), var(--gold-dark));
-            color: var(--ucl-deep); font-weight: 700;
-            box-shadow: 0 4px 16px var(--gold-glow);
-        }
-        .form-group { text-align: left; margin-bottom: 1.05rem; }
-        .form-group label {
-            display: block; font-size: 0.72rem; font-weight: 600;
-            text-transform: uppercase; letter-spacing: 0.08em;
-            color: var(--gold-primary); margin-bottom: 0.35rem;
-        }
-        .form-group input {
-            width: 100%; padding: 0.8rem 1rem;
-            background: rgba(1, 4, 12, 0.9);
-            border: 1px solid rgba(212, 175, 55, 0.25);
-            border-radius: var(--radius-md); color: var(--text-silver);
-            font-family: var(--font-sans); font-size: 0.92rem; outline: none;
-            transition: var(--transition);
-        }
-        .form-group input:focus {
-            border-color: var(--gold-rich);
-            box-shadow: 0 0 20px rgba(212, 175, 55, 0.4);
-            background: rgba(4, 9, 26, 0.95);
-        }
-        .auth-btn {
-            width: 100%; padding: 0.85rem; margin-top: 0.6rem;
-            background: linear-gradient(135deg, #fef2d6 0%, var(--gold-rich) 50%, #9a7b20 100%);
-            border: none; border-radius: var(--radius-pill);
-            color: #02040d; font-family: var(--font-display);
-            font-weight: 800; font-size: 0.88rem; letter-spacing: 0.14em;
-            text-transform: uppercase; cursor: pointer; transition: var(--transition);
-            box-shadow: 0 8px 30px rgba(212, 175, 55, 0.5);
-        }
-        .auth-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 12px 40px rgba(212, 175, 55, 0.7);
-            filter: brightness(1.1);
-        }
-        .auth-error {
-            background: rgba(197, 30, 58, 0.2); border: 1px solid var(--cr7-red);
-            color: #ff8595; padding: 0.6rem 0.85rem; border-radius: var(--radius-sm);
-            font-size: 0.8rem; margin-bottom: 1rem; display: none;
-        }
-
-        /* ================================================================
-           MAIN CHAT CONTAINER
-           ================================================================ */
-        #chatScreen {
-            display: none; height: 100vh;
-            position: relative; background: var(--ucl-deep);
-        }
-        #chatScreen.visible { display: flex; }
-
-        /* ================================================================
-           SIDEBAR
-           ================================================================ */
-        .sidebar {
-            width: 300px; min-width: 300px;
-            background: var(--ucl-glass-sidebar);
-            backdrop-filter: blur(28px);
-            border-right: 1px solid var(--gold-border);
-            display: flex; flex-direction: column;
-            position: relative; z-index: 30;
-            box-shadow: 15px 0 45px rgba(0, 0, 0, 0.75);
-        }
-        .sidebar-header {
-            padding: 1.15rem 1.15rem 0.95rem;
-            border-bottom: 1px solid rgba(212, 175, 55, 0.18);
-            background: linear-gradient(180deg, rgba(14, 24, 60, 0.45) 0%, transparent 100%);
-        }
-        .brand-row {
-            display: flex; align-items: center; justify-content: space-between;
-            margin-bottom: 0.85rem;
-        }
-        .brand-badge { display: flex; align-items: center; gap: 0.55rem; }
-        .brand-trophy { font-size: 1.45rem; filter: drop-shadow(0 0 10px var(--gold-rich)); }
-        .brand-text h1 {
-            font-family: var(--font-display);
-            font-size: 0.95rem; font-weight: 800; letter-spacing: 0.14em;
-            background: linear-gradient(135deg, #fff 0%, var(--gold-primary) 70%, var(--gold-rich) 100%);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        }
-        .brand-text span {
-            display: block; font-size: 0.6rem; font-family: var(--font-display);
-            letter-spacing: 0.2em; color: var(--gold-dark); text-transform: uppercase;
-        }
-        .btn-new-chat {
-            width: 35px; height: 35px; border-radius: var(--radius-pill);
-            background: linear-gradient(135deg, var(--gold-rich), var(--gold-dark));
-            border: 1px solid var(--gold-border-bright);
-            color: #02040d; font-weight: 800; font-size: 1.05rem;
-            cursor: pointer; transition: var(--transition);
-            display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 4px 14px var(--gold-glow);
-        }
-        .btn-new-chat:hover {
-            transform: scale(1.12) rotate(90deg);
-            box-shadow: 0 0 22px var(--gold-rich);
-        }
-
-        .user-card {
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 0.55rem 0.75rem; background: rgba(1, 4, 14, 0.8);
-            border: 1px solid rgba(212, 175, 55, 0.22); border-radius: var(--radius-md);
-        }
-        .user-meta { display: flex; align-items: center; gap: 0.55rem; }
-        .user-avatar {
-            width: 32px; height: 32px; border-radius: var(--radius-pill);
-            background: linear-gradient(135deg, var(--cr7-red), var(--gold-rich));
-            border: 1.5px solid var(--gold-primary);
-            display: flex; align-items: center; justify-content: center;
-            font-family: var(--font-display); font-weight: 800; font-size: 0.8rem;
-            color: #fff; box-shadow: 0 0 10px rgba(212, 175, 55, 0.4);
-        }
-        .user-name-text { font-size: 0.82rem; font-weight: 600; color: var(--text-silver); }
-        .user-status-text {
-            font-size: 0.64rem; color: var(--status-online);
-            display: flex; align-items: center; gap: 4px;
-        }
-        .user-status-text::before {
-            content: ''; display: inline-block; width: 5px; height: 5px;
-            border-radius: 50%; background: var(--status-online);
-            box-shadow: 0 0 6px var(--status-online);
-        }
-        .btn-logout {
-            background: rgba(197, 30, 58, 0.15); border: 1px solid rgba(197, 30, 58, 0.35);
-            color: #ff94a3; padding: 3px 8px; border-radius: var(--radius-pill);
-            font-size: 0.66rem; font-weight: 600; cursor: pointer; transition: var(--transition);
-        }
-        .btn-logout:hover {
-            background: var(--cr7-red); color: #fff;
-            box-shadow: 0 0 12px var(--cr7-red-glow);
-        }
-
-        .conversation-list {
-            flex: 1; overflow-y: auto; padding: 0.6rem 0.5rem;
-            display: flex; flex-direction: column; gap: 0.35rem;
-        }
-        .conv-item {
-            padding: 0.75rem 0.85rem; border-radius: var(--radius-md);
-            cursor: pointer; transition: var(--transition);
-            display: flex; align-items: center; gap: 0.75rem;
-            background: rgba(4, 10, 28, 0.45);
-            border: 1px solid rgba(212, 175, 55, 0.09);
-        }
-        .conv-item:hover {
-            background: rgba(10, 22, 60, 0.75);
-            border-color: rgba(212, 175, 55, 0.4);
-            transform: translateX(4px);
-        }
-        .conv-item.active {
-            background: linear-gradient(90deg, rgba(212, 175, 55, 0.22) 0%, rgba(6, 14, 38, 0.95) 100%);
-            border: 1px solid var(--gold-rich);
-            box-shadow: inset 3px 0 0 var(--gold-rich), 0 4px 20px rgba(0, 0, 0, 0.6);
-        }
-        .conv-avatar {
-            width: 40px; height: 40px; border-radius: var(--radius-pill);
-            background: linear-gradient(135deg, #0d1b47, #260f33);
-            border: 1px solid var(--gold-border);
-            display: flex; align-items: center; justify-content: center;
-            font-family: var(--font-display); font-weight: 700;
-            font-size: 1rem; color: var(--gold-primary); flex-shrink: 0;
-        }
-        .conv-info { flex: 1; min-width: 0; }
-        .conv-name {
-            font-weight: 600; font-size: 0.84rem; color: var(--text-silver);
-            margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .conv-last-msg {
-            font-size: 0.72rem; color: var(--text-muted);
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .conv-badge {
-            background: linear-gradient(135deg, var(--cr7-red), #9e1329);
-            color: white; font-size: 0.65rem; font-weight: 700;
-            padding: 2px 6px; border-radius: 10px; min-width: 18px; text-align: center;
-            box-shadow: 0 0 10px var(--cr7-red-glow);
-        }
-
-        /* ================================================================
-           FULL-BLEED AUTHENTIC SEAMLESS WIDESCREEN CR7 GLORY STAGE
-           ================================================================ */
-        .chat-area {
-            flex: 1; display: flex; flex-direction: column;
-            position: relative; overflow: hidden;
-            background: var(--ucl-deep);
-            perspective: 1400px;
-        }
-
-        /* Full-Bleed 16:9 Widescreen CR7 Stage Layer */
-        .cr7-cinematic-stage {
-            position: absolute; inset: 0; z-index: 1;
-            pointer-events: auto; overflow: hidden;
-            transform-style: preserve-3d;
-            transition: transform 0.3s ease-out;
-        }
-        .cr7-bg-photo {
-            position: absolute; inset: -2%;
-            width: 104%; height: 104%;
-            background: url('/static/cr7_master.jpg') center center/cover no-repeat;
-            opacity: 1.0;
-            filter: contrast(1.08) saturate(1.15) brightness(1.02);
-            animation: ucl-widescreen-pan 22s ease-in-out infinite alternate;
-        }
-        @keyframes ucl-widescreen-pan {
-            0%   { transform: scale(1.0) translate(0, 0); }
-            50%  { transform: scale(1.02) translate(-0.6%, -0.3%); }
-            100% { transform: scale(1.01) translate(0.5%, 0.2%); }
-        }
-
-        /* Real Wet Rain Lens Video Overlay (Invert nền trắng thành đen, giọt nước mờ mờ tinh tế) */
-        .real-rain-video {
-            position: absolute; inset: 0;
-            width: 100%; height: 100%;
-            object-fit: cover;
-            mix-blend-mode: screen;
-            opacity: 0.42;
-            filter: invert(1) contrast(3.0) brightness(0.85);
-            pointer-events: none;
-            z-index: 2;
-        }
-
-        /* Atmospheric Moscow Rain Mist Fog Overlay */
-        .moscow-fog-layer {
-            position: absolute; inset: 0; pointer-events: none;
-            background: radial-gradient(circle at 75% 35%, rgba(18, 28, 55, 0.2) 0%, rgba(2, 4, 13, 0.35) 70%);
-            mix-blend-mode: screen;
-            animation: fog-drift 14s ease-in-out infinite alternate;
-            z-index: 3;
-        }
-        @keyframes fog-drift {
-            0%   { opacity: 0.6; transform: scale(1); }
-            50%  { opacity: 0.85; transform: scale(1.04) translate(-1%, 1%); }
-            100% { opacity: 0.7; transform: scale(1.02) translate(1%, -1%); }
-        }
-
-        /* Golden Aura behind the Champions League Trophy */
-        .trophy-light-aura {
-            position: absolute;
-            top: 20%; right: 22%;
-            width: 460px; height: 460px;
-            background: radial-gradient(circle, rgba(255, 215, 0, 0.22) 0%, rgba(212, 175, 55, 0.06) 45%, transparent 70%);
-            border-radius: 50%;
-            filter: blur(35px);
-            animation: aura-breathe 4.5s ease-in-out infinite alternate;
-            pointer-events: none;
-        }
-        @keyframes aura-breathe {
-            from { opacity: 0.45; transform: scale(0.95); }
-            to   { opacity: 0.9; transform: scale(1.08); }
-        }
-
-        /* Subtle Gradient Scrim ensuring Message Readability on the Left */
-        .cr7-vignette-overlay {
-            position: absolute; inset: 0; pointer-events: none;
-            background: linear-gradient(
-                90deg,
-                rgba(2, 4, 13, 0.78) 0%,
-                rgba(2, 4, 13, 0.38) 36%,
-                rgba(2, 4, 13, 0.05) 75%,
-                rgba(2, 4, 13, 0.35) 100%
-            );
-        }
-
-        /* Canvas Layers */
-        #rainCanvas {
-            position: absolute; inset: 0;
-            width: 100%; height: 100%;
-            z-index: 4; pointer-events: none;
-        }
-
-        /* Gentle Sky Glow on Lightning */
-        .lightning-flash {
-            position: absolute; inset: 0; z-index: 4; pointer-events: none;
-            background: radial-gradient(circle at 60% 25%, rgba(185, 220, 255, 0.22), transparent 75%);
-            opacity: 0; transition: opacity 0.15s ease-out;
-        }
-
-        /* SIUUU Shockwave Ripple Effect on Message Send */
-        .gold-shockwave {
-            position: absolute; bottom: 35px; right: 40px;
-            width: 10px; height: 10px; border-radius: 50%;
-            border: 2px solid #ffd700;
-            box-shadow: 0 0 30px #ffd700, inset 0 0 20px var(--gold-rich);
-            z-index: 8; pointer-events: none;
-            opacity: 0;
-        }
-        @keyframes shockwave-fire {
-            0%   { opacity: 0.9; transform: scale(1); }
-            100% { opacity: 0; transform: scale(120); }
-        }
-
-        /* Header */
-        .chat-header {
-            position: relative; z-index: 10;
-            padding: 0.85rem 1.6rem;
-            background: var(--ucl-glass-header);
-            backdrop-filter: blur(24px);
-            border-bottom: 1px solid var(--gold-border);
-            display: flex; align-items: center; justify-content: space-between;
-            box-shadow: 0 4px 35px rgba(0, 0, 0, 0.65);
-        }
-        .chat-header-main { display: flex; align-items: center; gap: 0.9rem; }
-        .chat-header-avatar {
-            width: 42px; height: 42px; border-radius: var(--radius-pill);
-            background: linear-gradient(135deg, #0d1b47, #36101d);
-            border: 1.5px solid var(--gold-primary);
-            display: flex; align-items: center; justify-content: center;
-            font-family: var(--font-display); font-weight: 800; font-size: 1rem;
-            color: var(--gold-light);
-            box-shadow: 0 0 16px var(--gold-glow);
-        }
-        .chat-header-info h2 {
-            font-family: var(--font-display);
-            font-size: 1rem; font-weight: 800; letter-spacing: 0.06em;
-            color: #fff; display: flex; align-items: center; gap: 0.5rem;
-        }
-        .chat-header-tag {
-            font-size: 0.62rem; font-family: var(--font-sans);
-            padding: 2px 7px; border-radius: var(--radius-pill);
-            background: rgba(212, 175, 55, 0.15);
-            border: 1px solid var(--gold-border);
-            color: var(--gold-primary); text-transform: uppercase;
-        }
-        .typing-indicator {
-            font-size: 0.74rem; color: var(--gold-primary);
-            font-style: italic; min-height: 1em; margin-top: 1px;
-        }
-        .typing-dots span {
-            display: inline-block; width: 4px; height: 4px;
-            border-radius: 50%; background: var(--gold-primary);
-            margin: 0 1.5px; animation: ucl-typing 1.4s infinite ease-in-out;
-        }
-        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
-        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
-        @keyframes ucl-typing {
-            0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-            30% { transform: translateY(-4px); opacity: 1; }
-        }
-
-        .header-edition-badge {
-            font-family: var(--font-display);
-            font-size: 0.7rem; font-weight: 700;
-            color: var(--gold-primary); letter-spacing: 0.14em;
-            text-transform: uppercase; display: flex; align-items: center; gap: 0.45rem;
-            background: rgba(2, 5, 18, 0.7); padding: 5px 14px;
-            border-radius: var(--radius-pill);
-            border: 1px solid rgba(212, 175, 55, 0.3);
-            box-shadow: 0 0 16px rgba(0,0,0,0.6);
-        }
-        .header-edition-badge span.star {
-            color: var(--gold-rich); font-size: 0.8rem;
-            animation: star-spin 8s linear infinite;
-        }
-        @keyframes star-spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-
-        /* Messages Area */
-        .messages-area {
-            position: relative; z-index: 10;
-            flex: 1; overflow-y: auto;
-            padding: 1.2rem 1.8rem;
-            display: flex; flex-direction: column; gap: 0.7rem;
-            scroll-behavior: smooth;
-        }
-
-        .msg-wrapper {
-            display: flex; gap: 0.7rem; max-width: 55%;
-            animation: msg-fly-in 0.32s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        .msg-wrapper.sent { align-self: flex-end; flex-direction: row-reverse; }
-        .msg-wrapper.received { align-self: flex-start; }
-        @keyframes msg-fly-in {
-            from { opacity: 0; transform: translateY(10px) scale(0.97); }
-            to   { opacity: 1; transform: translateY(0) scale(1); }
-        }
-
-        .msg-avatar {
-            width: 32px; height: 32px; border-radius: var(--radius-pill);
-            background: linear-gradient(135deg, #0d1b47, #290f38);
-            border: 1px solid var(--gold-border);
-            display: flex; align-items: center; justify-content: center;
-            font-family: var(--font-display); font-weight: 700;
-            font-size: 0.72rem; color: var(--gold-primary); flex-shrink: 0;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-        }
-        .msg-bubble-wrap { display: flex; flex-direction: column; }
-
-        .msg-wrapper.sent .msg-bubble {
-            background: linear-gradient(135deg, rgba(230, 190, 104, 0.96) 0%, rgba(184, 134, 11, 0.92) 100%);
-            color: #02040d; font-weight: 500;
-            border-radius: var(--radius-lg);
-            border-bottom-right-radius: 4px;
-            border: 1px solid var(--gold-border-bright);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 16px rgba(212, 175, 55, 0.35);
-        }
-        .msg-wrapper.received .msg-bubble {
-            background: var(--ucl-glass-bubble-rec);
-            backdrop-filter: blur(18px);
-            border: 1px solid rgba(212, 175, 55, 0.28);
-            color: var(--text-silver);
-            border-radius: var(--radius-lg);
-            border-bottom-left-radius: 4px;
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-        }
-        .msg-bubble {
-            padding: 0.75rem 1.1rem; word-break: break-word;
-            line-height: 1.5; font-size: 0.9rem;
-        }
-
-        .msg-sender {
-            font-size: 0.7rem; font-weight: 700;
-            font-family: var(--font-display);
-            color: var(--gold-primary); letter-spacing: 0.05em; margin-bottom: 2px;
-        }
-        .msg-meta {
-            display: flex; align-items: center; gap: 0.4rem;
-            margin-top: 4px; font-size: 0.65rem; color: var(--text-muted);
-        }
-        .msg-wrapper.sent .msg-meta {
-            color: rgba(2, 4, 13, 0.65); justify-content: flex-end; font-weight: 600;
-        }
-        .msg-seq {
-            font-family: var(--font-display);
-            font-size: 0.58rem; font-weight: 700;
-            padding: 1px 4px; border-radius: 3px;
-            background: rgba(212, 175, 55, 0.15);
-            border: 1px solid rgba(212, 175, 55, 0.25);
-            color: var(--gold-primary);
-        }
-        .msg-wrapper.sent .msg-seq {
-            background: rgba(2, 4, 13, 0.15);
-            border-color: rgba(2, 4, 13, 0.3); color: #02040d;
-        }
-
-        /* Input Area */
-        .chat-input {
-            position: relative; z-index: 10;
-            padding: 1rem 1.6rem;
-            background: var(--ucl-glass-header);
-            backdrop-filter: blur(24px);
-            border-top: 1px solid var(--gold-border);
-            display: flex; align-items: center; gap: 0.8rem;
-        }
-        .input-wrapper {
-            flex: 1; position: relative; display: flex; align-items: center;
-        }
-        .chat-input input {
-            width: 100%; padding: 0.8rem 1.25rem;
-            background: rgba(2, 5, 18, 0.85);
-            border: 1px solid rgba(212, 175, 55, 0.25);
-            border-radius: var(--radius-pill); color: var(--text-silver);
-            font-family: var(--font-sans); font-size: 0.9rem;
-            outline: none; transition: var(--transition);
-        }
-        .chat-input input:focus {
-            border-color: var(--gold-rich);
-            background: rgba(4, 10, 28, 0.95);
-            box-shadow: 0 0 22px rgba(212, 175, 55, 0.4);
-        }
-        .chat-input input::placeholder {
-            color: rgba(142, 155, 181, 0.6); font-style: italic;
-        }
-
-        .btn-send {
-            width: 44px; height: 44px; border-radius: var(--radius-pill);
-            background: linear-gradient(135deg, #fff 0%, var(--gold-rich) 50%, #9a7b20 100%);
-            border: 1px solid var(--gold-border-bright);
-            cursor: pointer; display: flex; align-items: center; justify-content: center;
-            transition: var(--transition); flex-shrink: 0;
-            box-shadow: 0 6px 20px var(--gold-glow);
-        }
-        .btn-send:hover {
-            transform: scale(1.1) rotate(-8deg);
-            box-shadow: 0 0 28px var(--gold-glow-epic);
-        }
-        .btn-send svg { width: 18px; height: 18px; fill: #02040d; transform: translateX(1px); }
-
-        /* Empty State */
-        .empty-state {
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center;
-            height: 100%; color: var(--text-muted);
-            font-size: 0.92rem; gap: 0.8rem;
-            position: relative; z-index: 10; text-align: center;
-        }
-        .empty-state .icon {
-            font-size: 3.4rem; filter: drop-shadow(0 0 20px var(--gold-rich));
-            animation: empty-pulse 3s infinite alternate ease-in-out;
-        }
-        @keyframes empty-pulse {
-            from { transform: scale(0.95); }
-            to   { transform: scale(1.06); }
-        }
-        .empty-state h3 {
-            font-family: var(--font-display);
-            font-size: 1.2rem; font-weight: 700;
-            color: var(--gold-primary); letter-spacing: 0.08em;
-        }
-
-        /* Modal Overlay */
-        .modal-overlay {
-            position: fixed; inset: 0; z-index: 1000;
-            background: rgba(2, 4, 13, 0.8); backdrop-filter: blur(8px);
-            display: none; align-items: center; justify-content: center;
-        }
-        .modal-overlay.visible { display: flex; }
-        .modal {
-            background: rgba(4, 10, 28, 0.95);
-            border: 1px solid var(--gold-rich);
-            border-radius: var(--radius-lg);
-            padding: 2rem 1.8rem; width: 100%; max-width: 420px;
-            box-shadow: 0 25px 70px rgba(0, 0, 0, 0.85), 0 0 40px var(--gold-glow);
-        }
-        .modal h3 {
-            font-family: var(--font-display); font-size: 1.2rem; font-weight: 800;
-            letter-spacing: 0.06em; color: var(--gold-primary);
-            margin-bottom: 1.2rem; text-align: center;
-        }
-        .modal-actions { display: flex; gap: 0.5rem; margin-top: 1.4rem; }
-        .modal-actions button {
-            flex: 1; padding: 0.7rem; border: none; border-radius: var(--radius-pill);
-            font-family: var(--font-sans); font-weight: 600; cursor: pointer; transition: var(--transition);
-        }
-        .btn-cancel {
-            background: rgba(14, 24, 60, 0.8); border: 1px solid rgba(212, 175, 55, 0.2);
-            color: var(--text-muted);
-        }
-        .btn-confirm {
-            background: linear-gradient(135deg, var(--gold-rich), var(--gold-dark));
-            color: #02040d; font-weight: 700; box-shadow: 0 4px 15px var(--gold-glow);
-        }
-
-        /* Toast Container */
-        .toast-container {
-            position: fixed; top: 1.2rem; right: 1.5rem; z-index: 9999;
-            display: flex; flex-direction: column; gap: 0.5rem;
-        }
-        .toast {
-            background: rgba(4, 10, 28, 0.95); backdrop-filter: blur(20px);
-            border: 1px solid var(--gold-rich); border-radius: var(--radius-md);
-            padding: 0.85rem 1.3rem; box-shadow: 0 10px 40px rgba(0,0,0,0.7), 0 0 20px var(--gold-glow);
-            animation: toast-in 0.4s ease-out, toast-out 0.4s 3.2s ease-in forwards;
-            max-width: 350px;
-        }
-        .toast-title {
-            font-family: var(--font-display); font-weight: 700; font-size: 0.82rem;
-            color: var(--gold-primary);
-        }
-        .toast-body { font-size: 0.8rem; color: var(--text-silver); margin-top: 2px; }
-        @keyframes toast-in { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: translateX(0); } }
-        @keyframes toast-out { to { opacity: 0; transform: translateX(60px); } }
-
-        /* Connection Bar */
-        .connection-bar {
-            position: fixed; bottom: 0; left: 0; right: 0;
-            padding: 0.35rem; text-align: center;
-            font-family: var(--font-display); font-size: 0.7rem; font-weight: 700;
-            letter-spacing: 0.1em; z-index: 100; transition: var(--transition);
-        }
-        .connection-bar.connected { background: var(--status-online); color: #02040d; transform: translateY(100%); }
-        .connection-bar.disconnected { background: var(--cr7-red); color: #fff; transform: translateY(0); }
-        .connection-bar.connecting { background: #f59e0b; color: #02040d; transform: translateY(0); }
-
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(212, 175, 55, 0.25); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--gold-rich); }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CR7 Glory Chat</title>
+<meta name="description" content="Real-time chat — UEFA Champions League Final, Moscow 2008.">
+<link rel="icon" href="{% static 'img/favicon.svg' %}" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{% static 'css/tokens.css' %}?v={{ asset_version }}">
+<link rel="stylesheet" href="{% static 'css/base.css' %}?v={{ asset_version }}">
+<link rel="stylesheet" href="{% static 'css/atmosphere.css' %}?v={{ asset_version }}">
+<link rel="stylesheet" href="{% static 'css/components.css' %}?v={{ asset_version }}">
 </head>
 <body>
 
-<!-- ====== AUTH SCREEN ====== -->
-<div id="authScreen">
-    <div class="auth-backdrop"></div>
-    <div class="auth-card">
-        <div class="auth-crest">🏆</div>
-        <div class="auth-tagline">UEFA Champions League • Moscow 2008</div>
-        <h1 class="auth-title">CR7 GLORY CHAT</h1>
-        <p class="auth-sub">Enter the Champions Arena — Real-Time WebSocket</p>
-        <div class="auth-error" id="authError"></div>
-        <div class="auth-tabs">
-            <button class="active" onclick="showTab('login')">Sign In</button>
-            <button onclick="showTab('register')">Register</button>
-        </div>
-        <form id="loginForm" onsubmit="handleLogin(event)">
-            <div class="form-group">
-                <label>Username</label>
-                <input type="text" id="loginUser" required autocomplete="username" placeholder="Enter username">
-            </div>
-            <div class="form-group">
-                <label>Password</label>
-                <input type="password" id="loginPass" required autocomplete="current-password" placeholder="Enter password">
-            </div>
-            <button type="submit" class="auth-btn">Enter Arena</button>
-        </form>
-        <form id="registerForm" style="display:none" onsubmit="handleRegister(event)">
-            <div class="form-group">
-                <label>Username</label>
-                <input type="text" id="regUser" required minlength="3" placeholder="Choose username">
-            </div>
-            <div class="form-group">
-                <label>Password</label>
-                <input type="password" id="regPass" required minlength="6" placeholder="Choose password (min 6)">
-            </div>
-            <button type="submit" class="auth-btn">Join League</button>
-        </form>
-    </div>
+{% include "icons.svg" %}
+
+<!-- ================= NỀN 4 TẦNG ================= -->
+<div class="atmos" id="atmos">
+  <div class="atmos__image" id="atmosImage" aria-hidden="true"></div>
+  <div class="atmos__image atmos__image--next" id="atmosImageNext" aria-hidden="true"></div>
+  <video class="atmos__video" id="atmosVideo" aria-hidden="true"
+         src="{% static 'video/rain-loop.mp4' %}"
+         poster="{% static 'img/rain-poster.jpg' %}"
+         autoplay muted loop playsinline preload="auto"></video>
+  <canvas class="atmos__canvas" id="atmosCanvas" aria-hidden="true"></canvas>
+  <div class="atmos__scrim" aria-hidden="true"></div>
 </div>
 
-<!-- ====== MAIN CHAT SCREEN ====== -->
-<div id="chatScreen">
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <div class="brand-row">
-                <div class="brand-badge">
-                    <span class="brand-trophy">🏆</span>
-                    <div class="brand-text">
-                        <h1>CR7 CHAT</h1>
-                        <span>UCL Final Moscow 2008</span>
-                    </div>
-                </div>
-                <button class="btn-new-chat" onclick="showNewChatModal()" title="Create Match Room">+</button>
-            </div>
-            <div class="user-card">
-                <div class="user-meta">
-                    <div class="user-avatar" id="userAvatar">7</div>
-                    <div>
-                        <div class="user-name-text" id="userName">CR7 Player</div>
-                        <div class="user-status-text">Online • Active</div>
-                    </div>
-                </div>
-                <button class="btn-logout" onclick="logout()">Logout</button>
-            </div>
-        </div>
-        <div class="conversation-list" id="convList"></div>
+<!-- ================= ĐĂNG NHẬP ================= -->
+<div class="auth" id="authScreen">
+  <div class="auth__card">
+    <div class="brand rise">
+      <svg class="icon icon--lg brand__mark"><use href="#icon-logo"></use></svg>
+      <div class="brand__body">
+        <div class="brand__name display-text display-text--star"
+             data-text="CR7 Glory Chat">CR7 Glory Chat</div>
+        <div class="brand__eyebrow">Moscow 2008</div>
+      </div>
     </div>
 
-    <!-- Main Chat Area with Atmospheric Moscow Rain, 3D Organic Wet Glass & Trophy Glints -->
-    <div class="chat-area" id="chatArea">
-        <!-- Full-Bleed 16:9 Widescreen CR7 Stage Layer -->
-        <div class="cr7-cinematic-stage" id="cinematicStage">
-            <div class="cr7-bg-photo"></div>
-            <video class="real-rain-video" src="/static/hieu%20ung%20giot%20mua.mp4" autoplay loop muted playsinline></video>
-            <div class="moscow-fog-layer"></div>
-            <div class="trophy-light-aura"></div>
-            <div class="cr7-vignette-overlay"></div>
-            <canvas id="rainCanvas"></canvas>
-            <div class="lightning-flash" id="lightningFlash"></div>
-            <div class="gold-shockwave" id="goldShockwave"></div>
-        </div>
-
-        <!-- Empty State -->
-        <div class="empty-state" id="emptyState">
-            <div class="icon">🏆</div>
-            <h3>UEFA CHAMPIONS LEAGUE ARENA</h3>
-            <p>Select a match room on the left or create a new room to begin chatting.</p>
-        </div>
-
-        <!-- Active Chat Interface -->
-        <div id="chatContent" style="display:none; flex:1; display:flex; flex-direction:column; height:100%; position:relative; z-index:10;">
-            <div class="chat-header">
-                <div class="chat-header-main">
-                    <div class="chat-header-avatar" id="chatAvatar">7</div>
-                    <div class="chat-header-info">
-                        <h2 id="chatName">Match Room <span class="chat-header-tag">Final</span></h2>
-                        <div class="typing-indicator" id="typingIndicator"></div>
-                    </div>
-                </div>
-                <div class="header-edition-badge">
-                    <span class="star">★</span>
-                    <span>Moscow Rain of Glory • 2008</span>
-                    <span class="star">★</span>
-                </div>
-            </div>
-
-            <div class="messages-area" id="messagesArea"></div>
-
-            <div class="chat-input">
-                <div class="input-wrapper">
-                    <input type="text" id="msgInput" placeholder="Send real-time message..." autocomplete="off">
-                </div>
-                <button class="btn-send" id="btnSend" onclick="sendMessage()" title="Send Message (SIUUU!)">
-                    <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-                </button>
-            </div>
-        </div>
+    <div class="auth__tabs rise" role="tablist">
+      <button type="button" class="auth__tab" role="tab" aria-selected="true" data-tab="login">Đăng nhập</button>
+      <button type="button" class="auth__tab" role="tab" aria-selected="false" data-tab="register">Đăng ký</button>
     </div>
+
+    <div class="auth__error" id="authError" hidden>
+      <svg class="icon icon--sm"><use href="#icon-alert"></use></svg>
+      <span id="authErrorText"></span>
+    </div>
+
+    <form id="loginForm" class="rise" autocomplete="on">
+      <label class="field">
+        <span class="field__label">Tên đăng nhập</span>
+        <input type="text" class="field__input" id="loginUser" required autocomplete="username">
+      </label>
+      <label class="field">
+        <span class="field__label">Mật khẩu</span>
+        <input type="password" class="field__input" id="loginPass" required autocomplete="current-password">
+      </label>
+      <button type="submit" class="btn btn--primary auth__submit">Vào phòng</button>
+    </form>
+
+    <form id="registerForm" hidden autocomplete="on">
+      <label class="field">
+        <span class="field__label">Tên đăng nhập</span>
+        <input type="text" class="field__input" id="regUser" required minlength="3" autocomplete="username">
+      </label>
+      <label class="field">
+        <span class="field__label">Mật khẩu</span>
+        <input type="password" class="field__input" id="regPass" required minlength="6" autocomplete="new-password">
+      </label>
+      <button type="submit" class="btn btn--primary auth__submit">Tạo tài khoản</button>
+    </form>
+  </div>
 </div>
 
-<!-- Toast Notifications -->
-<div class="toast-container" id="toastContainer"></div>
+<!-- ================= ỨNG DỤNG ================= -->
+<div class="app-shell" id="app" hidden>
 
-<!-- New Chat Modal -->
-<div class="modal-overlay" id="newChatModal">
-    <div class="modal">
-        <h3>Create New Match Room</h3>
-        <div class="form-group">
-            <label>Tên Phòng (Room Name)</label>
-            <input type="text" id="newChatName" placeholder="e.g. Manchester United vs Chelsea">
+  <aside class="sidebar">
+    <div class="sidebar__top rise">
+      <div class="brand">
+        <svg class="icon icon--lg brand__mark"><use href="#icon-logo"></use></svg>
+        <div class="brand__body">
+          <div class="brand__name brand__name--sm display-text display-text--star"
+               data-text="CR7 Glory Chat">CR7 Glory Chat</div>
+          <div class="brand__eyebrow">Moscow 2008</div>
         </div>
-        <div class="form-group">
-            <label>Mời Thành Viên (Username hoặc ID - Tùy chọn)</label>
-            <input type="text" id="newChatMember" placeholder="Nhập username (vd: duccong, anhdo) hoặc để trống">
-        </div>
-        <div class="modal-actions">
-            <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-            <button class="btn-confirm" onclick="createChat()">Create Room</button>
-        </div>
+      </div>
+      <div class="sidebar__actions">
+        <button class="btn-icon" id="btnPublicRooms" title="Phòng công khai">
+          <svg class="icon"><use href="#icon-globe"></use></svg>
+        </button>
+        <button class="btn-icon" id="btnJoinCode" title="Tham gia bằng mã">
+          <svg class="icon"><use href="#icon-key"></use></svg>
+        </button>
+        <button class="btn-icon" id="btnCreateRoom" title="Tạo phòng mới">
+          <svg class="icon"><use href="#icon-plus"></use></svg>
+        </button>
+      </div>
     </div>
+
+    <div class="sidebar__search rise">
+      <svg class="icon icon--sm sidebar__search-icon"><use href="#icon-search"></use></svg>
+      <input type="search" class="sidebar__search-input" id="roomFilter"
+             placeholder="Lọc phòng (Ctrl+K)" autocomplete="off">
+    </div>
+
+    <div class="sidebar__list rise" id="roomList"></div>
+
+    <div class="sidebar__user">
+      <span class="avatar avatar--sm" id="meAvatar"></span>
+      <div class="sidebar__user-body">
+        <div class="sidebar__user-name" id="meName"></div>
+        <div class="sidebar__user-state">
+          <span class="presence-dot" data-state="online"></span>
+          <span>Trực tuyến</span>
+        </div>
+      </div>
+      <button class="btn-icon" id="btnTheme" title="Đổi hình nền">
+        <svg class="icon"><use href="#icon-palette"></use></svg>
+      </button>
+      <button class="btn-icon" id="btnShortcuts" title="Phím tắt (?)">
+        <svg class="icon"><use href="#icon-keyboard"></use></svg>
+      </button>
+      <button class="btn-icon" id="btnLogout" title="Đăng xuất">
+        <svg class="icon"><use href="#icon-logout"></use></svg>
+      </button>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <header class="room-header" id="roomHeader" hidden>
+      <span class="avatar room-header__avatar" id="roomAvatar"></span>
+      <div class="room-header__body">
+        <h1 class="room-header__title display-text">
+          <span class="room-header__name display-text--star" id="roomName"></span>
+          <span class="conn-dot" id="connDot" data-state="connecting" title="Đang kết nối"></span>
+        </h1>
+        <div class="room-header__meta">
+          <span class="tag" id="roomVisibility">Riêng tư</span>
+          <span class="tag" id="roomCode"></span>
+          <span id="roomMemberCount"></span>
+        </div>
+      </div>
+      <div class="room-header__actions">
+        <button class="btn-icon" id="btnSearchPanel" title="Tìm trong phòng">
+          <svg class="icon"><use href="#icon-search"></use></svg>
+        </button>
+        <button class="btn-icon" id="btnMemberPanel" title="Thành viên">
+          <svg class="icon"><use href="#icon-members"></use></svg>
+        </button>
+        <button class="btn-icon" id="btnLeaveRoom" title="Rời phòng">
+          <svg class="icon"><use href="#icon-close"></use></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="pin-bar" id="pinBar" hidden>
+      <svg class="icon icon--sm pin-bar__icon"><use href="#icon-pin"></use></svg>
+      <button type="button" class="pin-bar__text" id="pinBarText"></button>
+      <span class="pin-bar__count" id="pinBarCount"></span>
+      <button class="btn-icon" id="pinBarNext" title="Tin ghim tiếp theo" hidden>
+        <svg class="icon icon--sm"><use href="#icon-chevron-down"></use></svg>
+      </button>
+    </div>
+
+    <div class="empty-state" id="emptyState">
+      <div class="empty-state__title display-text display-text--float rise">
+        Chưa có phòng nào đang mở.
+      </div>
+      <div class="empty-state__sub rise">
+        Chọn một phòng ở cột trái, hoặc mở phòng mới để bắt đầu.
+      </div>
+      <div class="empty-state__actions rise">
+        <button class="btn-text" id="emptyCreate">Tạo phòng mới</button>
+        <button class="btn-text" id="emptyJoin">Tham gia bằng mã</button>
+      </div>
+    </div>
+
+    <div class="message-list" id="messageList" hidden></div>
+
+    <button class="scroll-down" id="scrollDown">
+      <svg class="icon icon--sm"><use href="#icon-arrow-down"></use></svg>
+      <span id="scrollDownCount"></span>
+    </button>
+
+    <div class="composer" id="composer" hidden>
+      <div class="typing-line" id="typingLine"></div>
+
+      <div class="reply-preview" id="replyPreview" hidden>
+        <svg class="icon icon--sm"><use href="#icon-reply"></use></svg>
+        <span class="reply-preview__text" id="replyPreviewText"></span>
+        <button class="btn-icon" id="replyCancel" title="Bỏ trích dẫn">
+          <svg class="icon icon--sm"><use href="#icon-close"></use></svg>
+        </button>
+      </div>
+
+      <div class="composer__box">
+        <button class="btn-icon" id="btnEmoji" title="Chèn emoji">
+          <svg class="icon"><use href="#icon-emoji"></use></svg>
+        </button>
+        <textarea class="composer__input" id="msgInput" rows="1" placeholder="Nhắn gì đó…"></textarea>
+        <span class="composer__counter" id="charCounter" hidden></span>
+        <button class="composer__send" id="btnSend" title="Gửi (Enter)">
+          <svg class="icon"><use href="#icon-send"></use></svg>
+        </button>
+      </div>
+
+      <div class="popover emoji-panel" id="emojiPanel" hidden></div>
+      <div class="popover menu" id="menuPanel" hidden></div>
+    </div>
+  </main>
+
+  <aside class="side-panel" id="sidePanel" hidden>
+    <div class="side-panel__head">
+      <span id="sidePanelTitle">Thành viên</span>
+      <button class="btn-icon" id="btnClosePanel" title="Đóng">
+        <svg class="icon icon--sm"><use href="#icon-close"></use></svg>
+      </button>
+    </div>
+    <div class="side-panel__section" id="searchForm" hidden>
+      <input type="search" class="field__input" id="roomSearchInput"
+             placeholder="Tìm tin nhắn…" autocomplete="off">
+    </div>
+    <div class="side-panel__body" id="sidePanelBody"></div>
+  </aside>
 </div>
 
-<!-- Connection Bar -->
-<div class="connection-bar disconnected" id="connectionBar">Connecting to Daphne ASGI Server...</div>
-
-<script>
-// ====================================================================
-// STATE MANAGEMENT
-// ====================================================================
-let state = {
-    accessToken: null,
-    refreshToken: null,
-    user: null,
-    ws: null,
-    notifWs: null,
-    conversations: [],
-    activeConvId: null,
-    messages: {},
-    typingTimers: {},
-    heartbeatInterval: null,
-    reconnectTimeout: null,
-};
-
-// ====================================================================
-// AUTHENTICATION FLOW
-// ====================================================================
-function showTab(tab) {
-    document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
-    document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
-    document.querySelectorAll('.auth-tabs button').forEach((b, i) => {
-        b.classList.toggle('active', (tab === 'login' ? i === 0 : i === 1));
-    });
-    document.getElementById('authError').style.display = 'none';
-}
-
-function showAuthError(msg) {
-    const el = document.getElementById('authError');
-    el.textContent = msg; el.style.display = 'block';
-}
-
-async function handleLogin(e) {
-    e.preventDefault();
-    try {
-        const resp = await fetch('/api/auth/login/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                username: document.getElementById('loginUser').value.trim(),
-                password: document.getElementById('loginPass').value,
-            }),
-        });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.error || 'Login failed');
-        onAuth(data);
-    } catch (err) { showAuthError(err.message); }
-}
-
-async function handleRegister(e) {
-    e.preventDefault();
-    try {
-        const resp = await fetch('/api/auth/register/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                username: document.getElementById('regUser').value.trim(),
-                password: document.getElementById('regPass').value,
-            }),
-        });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.username?.[0] || data.error || 'Registration failed');
-        onAuth(data);
-    } catch (err) { showAuthError(err.message); }
-}
-
-function onAuth(data) {
-    state.accessToken = data.access_token;
-    state.refreshToken = data.refresh_token;
-    state.user = data.user;
-    localStorage.setItem('auth', JSON.stringify(data));
-
-    document.getElementById('authScreen').classList.add('hidden');
-    document.getElementById('chatScreen').classList.add('visible');
-    document.getElementById('userName').textContent = state.user.username;
-    document.getElementById('userAvatar').textContent = state.user.username[0].toUpperCase();
-
-    loadConversations();
-    connectNotificationWS();
-    initAtmosphericMoscowVFX();
-}
-
-function logout() {
-    localStorage.removeItem('auth');
-    state = { accessToken: null, refreshToken: null, user: null, ws: null, notifWs: null, conversations: [], activeConvId: null, messages: {}, typingTimers: {}, heartbeatInterval: null, reconnectTimeout: null };
-    if (state.ws) state.ws.close();
-    if (state.notifWs) state.notifWs.close();
-    location.reload();
-}
-
-(function checkSession() {
-    const saved = localStorage.getItem('auth');
-    if (saved) {
-        try { onAuth(JSON.parse(saved)); } catch(e) { localStorage.removeItem('auth'); }
-    }
-})();
-
-// ====================================================================
-// REST API HELPERS
-// ====================================================================
-async function apiFetch(url, opts = {}) {
-    const headers = { 'Content-Type': 'application/json', ...opts.headers };
-    if (state.accessToken) headers['Authorization'] = `Bearer ${state.accessToken}`;
-    let resp = await fetch(url, { ...opts, headers });
-    if (resp.status === 401) {
-        const refreshed = await refreshAuth();
-        if (refreshed) {
-            headers['Authorization'] = `Bearer ${state.accessToken}`;
-            return fetch(url, { ...opts, headers });
-        }
-        showToast('Phiên làm việc hết hạn', 'Vui lòng đăng nhập lại.');
-        setTimeout(logout, 800);
-        return resp;
-    }
-    return resp;
-}
-
-async function refreshAuth() {
-    try {
-        const resp = await fetch('/api/auth/refresh/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: state.refreshToken }),
-        });
-        if (!resp.ok) return false;
-        const data = await resp.json();
-        state.accessToken = data.access_token;
-        state.refreshToken = data.refresh_token;
-        const saved = JSON.parse(localStorage.getItem('auth') || '{}');
-        saved.access_token = data.access_token;
-        saved.refresh_token = data.refresh_token;
-        localStorage.setItem('auth', JSON.stringify(saved));
-        return true;
-    } catch { return false; }
-}
-
-// ====================================================================
-// CONVERSATIONS MANAGEMENT
-// ====================================================================
-async function loadConversations() {
-    const resp = await apiFetch('/api/conversations/');
-    const data = await resp.json();
-    state.conversations = data.results || [];
-    renderConversations();
-}
-
-function renderConversations() {
-    const list = document.getElementById('convList');
-    if (state.conversations.length === 0) {
-        list.innerHTML = '<div style="padding:2.5rem 1rem;text-align:center;color:var(--text-muted);font-size:0.85rem;line-height:1.6;">No match rooms created.<br><span style="color:var(--gold-primary);">Click + to start one.</span></div>';
-        return;
-    }
-    list.innerHTML = state.conversations.map(c => {
-        const initial = (c.name || 'C')[0].toUpperCase();
-        const lastMsg = c.last_message ? c.last_message.content.substring(0, 36) : 'No messages yet';
-        const isActive = c.id === state.activeConvId;
-        const badge = c.unread_count > 0 ? `<span class="conv-badge">${c.unread_count}</span>` : '';
-        return `<div class="conv-item ${isActive ? 'active' : ''}" onclick="openConversation(${c.id})">
-            <div class="conv-avatar">${initial}</div>
-            <div class="conv-info">
-                <div class="conv-name">${c.name || 'Match #' + c.id}</div>
-                <div class="conv-last-msg">${escapeHtml(lastMsg)}</div>
-            </div>
-            ${badge}
-        </div>`;
-    }).join('');
-}
-
-// ====================================================================
-// WEBSOCKET REAL-TIME CHAT
-// ====================================================================
-function openConversation(convId) {
-    state.activeConvId = convId;
-    renderConversations();
-
-    document.getElementById('emptyState').style.display = 'none';
-    const cc = document.getElementById('chatContent');
-    cc.style.display = 'flex';
-
-    const conv = state.conversations.find(c => c.id === convId);
-    const chatTitle = conv ? (conv.name || 'Match #' + convId) : 'Match Room';
-    document.getElementById('chatName').innerHTML = `${escapeHtml(chatTitle)} <span class="chat-header-tag">Final 2008</span>`;
-    document.getElementById('chatAvatar').textContent = (chatTitle || 'C')[0].toUpperCase();
-    document.getElementById('typingIndicator').innerHTML = '';
-
-    loadMessages(convId);
-    connectChatWS(convId);
-}
-
-async function loadMessages(convId) {
-    const resp = await apiFetch(`/api/conversations/${convId}/messages/`);
-    const data = await resp.json();
-    state.messages[convId] = data.results || [];
-    renderMessages();
-}
-
-function connectChatWS(convId) {
-    if (state.ws) { state.ws.close(); }
-    clearInterval(state.heartbeatInterval);
-
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${location.host}/ws/chat/${convId}/?token=${state.accessToken}`;
-
-    setConnectionStatus('connecting');
-    state.ws = new WebSocket(url);
-
-    state.ws.onopen = () => {
-        setConnectionStatus('connected');
-        state.heartbeatInterval = setInterval(() => {
-            if (state.ws?.readyState === WebSocket.OPEN) {
-                state.ws.send(JSON.stringify({ type: 'chat.heartbeat' }));
-            }
-        }, 15000);
-    };
-
-    state.ws.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        handleWSMessage(data);
-    };
-
-    state.ws.onclose = (e) => {
-        setConnectionStatus('disconnected');
-        clearInterval(state.heartbeatInterval);
-        if (state.activeConvId === convId) {
-            state.reconnectTimeout = setTimeout(() => connectChatWS(convId), 3000);
-        }
-    };
-
-    state.ws.onerror = () => setConnectionStatus('disconnected');
-}
-
-function handleWSMessage(data) {
-    switch (data.type) {
-        case 'chat.message':
-            if (!state.messages[state.activeConvId]) state.messages[state.activeConvId] = [];
-            state.messages[state.activeConvId].push(data.message);
-            renderMessages();
-            if (data.message.sender_id !== state.user.id) {
-                state.ws.send(JSON.stringify({ type: 'chat.read', message_id: data.message.id }));
-            }
-            break;
-        case 'chat.typing':
-            showTyping(data.username, data.is_typing);
-            break;
-        case 'chat.sync_response':
-            if (data.messages?.length > 0) {
-                if (!state.messages[data.conversation_id]) state.messages[data.conversation_id] = [];
-                state.messages[data.conversation_id].push(...data.messages);
-                renderMessages();
-            }
-            break;
-        case 'notification':
-            showToast(data.notification.title, data.notification.body);
-            loadConversations();
-            break;
-    }
-}
-
-function triggerSendVFX() {
-    const shockwave = document.getElementById('goldShockwave');
-    if (shockwave) {
-        shockwave.style.animation = 'none';
-        shockwave.offsetHeight;
-        shockwave.style.animation = 'shockwave-fire 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards';
-    }
-}
-
-function sendMessage() {
-    const input = document.getElementById('msgInput');
-    const text = input.value.trim();
-    if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-
-    const clientMsgId = crypto.randomUUID();
-    state.ws.send(JSON.stringify({
-        type: 'chat.message',
-        content: text,
-        client_message_id: clientMsgId,
-    }));
-    input.value = '';
-    state.ws.send(JSON.stringify({ type: 'chat.typing', is_typing: false }));
-
-    triggerSendVFX();
-}
-
-function renderMessages() {
-    const area = document.getElementById('messagesArea');
-    const msgs = state.messages[state.activeConvId] || [];
-    area.innerHTML = msgs.map(m => {
-        const isSent = m.sender_id === state.user.id;
-        const initial = (m.sender_username || '?')[0].toUpperCase();
-        const time = new Date(m.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-        return `<div class="msg-wrapper ${isSent ? 'sent' : 'received'}">
-            <div class="msg-avatar">${initial}</div>
-            <div class="msg-bubble-wrap">
-                ${!isSent ? `<div class="msg-sender">${escapeHtml(m.sender_username)}</div>` : ''}
-                <div class="msg-bubble">${escapeHtml(m.content)}</div>
-                <div class="msg-meta">
-                    <span>${time}</span>
-                    <span class="msg-seq">#${m.sequence_number}</span>
-                </div>
-            </div>
-        </div>`;
-    }).join('');
-    area.scrollTop = area.scrollHeight;
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const input = document.getElementById('msgInput');
-    if (!input) return;
-    let typingTimeout;
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { sendMessage(); return; }
-        if (state.ws?.readyState === WebSocket.OPEN) {
-            state.ws.send(JSON.stringify({ type: 'chat.typing', is_typing: true }));
-            clearTimeout(typingTimeout);
-            typingTimeout = setTimeout(() => {
-                state.ws.send(JSON.stringify({ type: 'chat.typing', is_typing: false }));
-            }, 2000);
-        }
-    });
-});
-
-function showTyping(username, isTyping) {
-    const el = document.getElementById('typingIndicator');
-    if (isTyping) {
-        el.innerHTML = `${escapeHtml(username)} is typing<span class="typing-dots"><span></span><span></span><span></span></span>`;
-        clearTimeout(state.typingTimers[username]);
-        state.typingTimers[username] = setTimeout(() => { el.innerHTML = ''; }, 3000);
-    } else {
-        el.innerHTML = '';
-        clearTimeout(state.typingTimers[username]);
-    }
-}
-
-function connectNotificationWS() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${location.host}/ws/notifications/?token=${state.accessToken}`;
-    state.notifWs = new WebSocket(url);
-    state.notifWs.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        if (data.type === 'notification') {
-            showToast(data.notification.title, data.notification.body);
-            loadConversations();
-        }
-    };
-    state.notifWs.onclose = () => setTimeout(connectNotificationWS, 5000);
-}
-
-function showNewChatModal() { document.getElementById('newChatModal').classList.add('visible'); }
-function closeModal() { document.getElementById('newChatModal').classList.remove('visible'); }
-
-async function createChat() {
-    const nameInput = document.getElementById('newChatName');
-    const memberInput = document.getElementById('newChatMember');
-    const name = nameInput.value.trim() || 'Champions Room';
-    const memberVal = memberInput.value.trim();
-
-    const body = { name, type: 'group' };
-    if (memberVal) {
-        if (/^\d+$/.test(memberVal)) {
-            body.member_ids = [parseInt(memberVal, 10)];
-        } else {
-            body.member_usernames = [memberVal];
-        }
-    }
-
-    try {
-        const resp = await apiFetch('/api/conversations/', {
-            method: 'POST',
-            body: JSON.stringify(body),
-        });
-        if (resp.status === 401) return;
-        const data = await resp.json();
-        if (resp.ok) {
-            closeModal();
-            nameInput.value = '';
-            memberInput.value = '';
-            await loadConversations();
-            openConversation(data.id);
-            showToast('Thành công', `Đã tạo phòng: ${data.name || 'Room #' + data.id}`);
-        } else {
-            const err = data.member_ids?.[0] || data.member_usernames?.[0] || data.error || data.detail || JSON.stringify(data);
-            showToast('Lỗi tạo phòng', err);
-        }
-    } catch (err) {
-        showToast('Lỗi kết nối', err.message);
-    }
-}
-
-function escapeHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
-}
-
-function setConnectionStatus(status) {
-    const bar = document.getElementById('connectionBar');
-    bar.className = 'connection-bar ' + status;
-    bar.textContent = status === 'connected' ? 'Connected • Daphne ASGI' : status === 'connecting' ? 'Connecting to Arena...' : 'Disconnected — Reconnecting in 3s...';
-    if (status === 'connected') setTimeout(() => bar.classList.add('connected'), 1200);
-}
-
-function showToast(title, body) {
-    const container = document.getElementById('toastContainer');
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.innerHTML = `<div class="toast-title">🏆 ${escapeHtml(title)}</div><div class="toast-body">${escapeHtml(body || '')}</div>`;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 3600);
-}
-
-// ====================================================================
-// ATMOSPHERIC MOSCOW 2008 RAIN OF GLORY VFX ENGINE:
-// 1. DUAL-LAYER REALISTIC RAIN & VOLUMETRIC MIST
-// 2. SOFT DISTANT LIGHTNING & RUMBLE
-// 3. ORGANIC STOCHASTIC 3D WET LENS RIVULETS (ZIG-ZAG TRICKLING & MERGING)
-// 4. PAPARAZZI FLASHBULBS & SILVER TROPHY SPECULAR STARBURST GLINTS
-// ====================================================================
-function initAtmosphericMoscowVFX() {
-    const chatArea = document.getElementById('chatArea');
-    const stage = document.getElementById('cinematicStage');
-    const canvas = document.getElementById('rainCanvas');
-    if (!canvas || !chatArea) return;
-    const ctx = canvas.getContext('2d');
-
-    let width = (canvas.width = canvas.offsetWidth);
-    let height = (canvas.height = canvas.offsetHeight);
-
-    window.addEventListener('resize', () => {
-        width = canvas.width = canvas.offsetWidth;
-        height = canvas.height = canvas.offsetHeight;
-    });
-
-    // 1. Subtle 3D Parallax Tilt
-    chatArea.addEventListener('mousemove', (e) => {
-        const rect = chatArea.getBoundingClientRect();
-        const x = (e.clientX - rect.left) / rect.width - 0.5;
-        const y = (e.clientY - rect.top) / rect.height - 0.5;
-        if (stage) {
-            stage.style.transform = `rotateY(${x * 3.5}deg) rotateX(${-y * 2.5}deg) scale(1.005)`;
-        }
-    });
-    chatArea.addEventListener('mouseleave', () => {
-        if (stage) stage.style.transform = 'rotateY(0deg) rotateX(0deg) scale(1)';
-    });
-
-    // 2. Dual-Layer Atmospheric Rain System
-    const backgroundRain = [];
-    const foregroundRain = [];
-    const splashes = [];
-
-    // Background Misty Rain (Mưa mờ huyền ảo xa)
-    for (let i = 0; i < 40; i++) {
-        backgroundRain.push({
-            x: Math.random() * width,
-            y: Math.random() * height,
-            length: 14 + Math.random() * 18,
-            speed: 7 + Math.random() * 5,
-            angle: -0.12,
-            opacity: 0.12 + Math.random() * 0.18,
-            thickness: 0.8 + Math.random() * 0.6,
-        });
-    }
-
-    // Foreground Crystal Rain (Mưa cận cảnh sáng rõ)
-    for (let i = 0; i < 35; i++) {
-        foregroundRain.push({
-            x: Math.random() * width,
-            y: Math.random() * height,
-            length: 28 + Math.random() * 32,
-            speed: 13 + Math.random() * 8,
-            angle: -0.14,
-            opacity: 0.35 + Math.random() * 0.45,
-            thickness: 1.5 + Math.random() * 1.3,
-        });
-    }
-
-    // 3. Paparazzi Flashbulbs in Stadium Crowd (Đèn flash máy ảnh báo chí chớp lóe)
-    const paparazziFlashes = [];
-    function spawnPaparazziFlash() {
-        paparazziFlashes.push({
-            x: width * (0.2 + Math.random() * 0.75),
-            y: height * (0.08 + Math.random() * 0.55),
-            radius: 12 + Math.random() * 25,
-            maxRadius: 40 + Math.random() * 60,
-            alpha: 0.7 + Math.random() * 0.3,
-            decay: 0.04 + Math.random() * 0.05,
-        });
-    }
-
-    // 4. Silver Trophy Sparkling Starburst Glints (Điểm sáng lấp lánh phản chiếu trên cúp bạc)
-    const trophyGlints = [];
-    // Approximate coordinate box of the UCL Trophy in master image (center-right)
-    function spawnTrophyGlint() {
-        const tx = width * (0.64 + Math.random() * 0.26);
-        const ty = height * (0.22 + Math.random() * 0.58);
-        trophyGlints.push({
-            x: tx,
-            y: ty,
-            size: 2 + Math.random() * 3.5,
-            maxSize: 6 + Math.random() * 10,
-            growth: 0.4 + Math.random() * 0.6,
-            rotation: Math.random() * Math.PI,
-            rotSpeed: 0.03 + Math.random() * 0.05,
-            alpha: 0.9,
-            life: 0,
-            maxLife: 35 + Math.random() * 35,
-        });
-    }
-
-    // 5. Stochastic 3D Organic Wet Screen Glass Droplets & Irregular Trickling Rivulets
-    // (Hiệu ứng giọt nước tràn nhiễu ướt ống kính, trượt ngoằn ngoèo ngẫu nhiên không quy tắc)
-    const wetDrops = [];
-
-    function spawnOrganicWetDrop() {
-        const dropX = 50 + Math.random() * (width - 100);
-        const dropY = 20 + Math.random() * (height * 0.45);
-        const radius = 5 + Math.random() * 12; // Kích cỡ giọt nước 3D
-        
-        wetDrops.push({
-            x: dropX,
-            y: dropY,
-            radius: radius,
-            opacity: 0.0,
-            targetOpacity: 0.75 + Math.random() * 0.22,
-            impactRingRadius: radius * 0.7,
-            impactRingMax: radius * 3.6,
-            impactRingOpacity: 0.8,
-            life: 0,
-            maxLife: 420 + Math.random() * 320,
-            
-            // Physics phi tuyến tính: trượt ngẫu nhiên, dừng nghỉ, rồi đột ngột trượt nhanh
-            speedY: 0.3 + Math.random() * 0.8,
-            accelY: 0.002 + Math.random() * 0.006,
-            hesitationTimer: Math.floor(Math.random() * 40),
-            hesitationDuration: 15 + Math.random() * 35,
-            isHesitating: false,
-            
-            // Zig-zag ngẫu nhiên không theo quy tắc
-            driftNoisePhase: Math.random() * 100,
-            driftNoiseSpeed: 0.04 + Math.random() * 0.06,
-            driftStrength: 0.6 + Math.random() * 1.0,
-            
-            trail: [],
-        });
-    }
-
-    // Initial drops
-    setTimeout(spawnOrganicWetDrop, 400);
-    setTimeout(spawnOrganicWetDrop, 1400);
-    setTimeout(spawnOrganicWetDrop, 2800);
-
-    let dropSpawnCounter = 0;
-    let flashbulbTimer = 0;
-    let glintTimer = 0;
-
-    // 6. Soft Atmospheric Sky Lightning
-    let softLightning = null;
-    const flashEl = document.getElementById('lightningFlash');
-
-    function triggerSoftLightning() {
-        softLightning = {
-            x: width * (0.25 + Math.random() * 0.5),
-            y: 0,
-            points: [],
-            alpha: 0.28,
-        };
-        let curX = softLightning.x;
-        let curY = 0;
-        const targetY = height * 0.48;
-        softLightning.points.push({ x: curX, y: curY });
-        while (curY < targetY) {
-            curY += 18 + Math.random() * 26;
-            curX += (Math.random() - 0.5) * 40;
-            softLightning.points.push({ x: curX, y: curY });
-        }
-
-        if (flashEl) {
-            flashEl.style.opacity = '0.22';
-            setTimeout(() => { flashEl.style.opacity = '0'; }, 240);
-        }
-    }
-
-    function animate() {
-        ctx.clearRect(0, 0, width, height);
-
-        // A. Draw Background Misty Rain (Lớp mưa xa mờ huyền ảo)
-        for (const d of backgroundRain) {
-            ctx.strokeStyle = `rgba(180, 210, 240, ${d.opacity})`;
-            ctx.lineWidth = d.thickness;
-            ctx.beginPath();
-            ctx.moveTo(d.x, d.y);
-            ctx.lineTo(d.x + d.angle * d.length, d.y + d.length);
-            ctx.stroke();
-
-            d.x += d.angle * d.speed;
-            d.y += d.speed;
-
-            if (d.y > height) {
-                d.y = -20;
-                d.x = Math.random() * width + 40;
-            }
-        }
-
-        // B. Draw Paparazzi Flashbulbs in the Crowd (Ánh chớp máy ảnh của phóng viên)
-        for (let i = paparazziFlashes.length - 1; i >= 0; i--) {
-            const f = paparazziFlashes[i];
-            const grad = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.radius);
-            grad.addColorStop(0, `rgba(255, 255, 255, ${f.alpha})`);
-            grad.addColorStop(0.35, `rgba(220, 240, 255, ${f.alpha * 0.6})`);
-            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-            
-            ctx.fillStyle = grad;
-            ctx.beginPath();
-            ctx.arc(f.x, f.y, f.radius, 0, Math.PI * 2);
-            ctx.fill();
-
-            f.radius += (f.maxRadius - f.radius) * 0.25;
-            f.alpha -= f.decay;
-            if (f.alpha <= 0) paparazziFlashes.splice(i, 1);
-        }
-
-        // C. Draw Silver Trophy Specular Starburst Glints (Điểm sáng kim cương lấp lánh trên chiếc cúp)
-        for (let i = trophyGlints.length - 1; i >= 0; i--) {
-            const g = trophyGlints[i];
-            g.life++;
-
-            ctx.save();
-            ctx.translate(g.x, g.y);
-            ctx.rotate(g.rotation);
-            g.rotation += g.rotSpeed;
-
-            const curSize = g.size < g.maxSize ? (g.size += g.growth) : g.maxSize;
-            const starAlpha = Math.sin((g.life / g.maxLife) * Math.PI) * g.alpha;
-
-            // 4-Point Diamond Flare
-            ctx.strokeStyle = `rgba(255, 255, 255, ${starAlpha})`;
-            ctx.lineWidth = 1.8;
-            ctx.beginPath();
-            // Horizontal flare
-            ctx.moveTo(-curSize * 2.2, 0);
-            ctx.lineTo(curSize * 2.2, 0);
-            // Vertical flare
-            ctx.moveTo(0, -curSize * 2.2);
-            ctx.lineTo(0, curSize * 2.2);
-            ctx.stroke();
-
-            // Diagonal mini flare
-            ctx.strokeStyle = `rgba(255, 235, 170, ${starAlpha * 0.7})`;
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            ctx.moveTo(-curSize * 1.1, -curSize * 1.1);
-            ctx.lineTo(curSize * 1.1, curSize * 1.1);
-            ctx.moveTo(curSize * 1.1, -curSize * 1.1);
-            ctx.lineTo(-curSize * 1.1, curSize * 1.1);
-            ctx.stroke();
-
-            // Center glowing core
-            ctx.fillStyle = `rgba(255, 255, 255, ${starAlpha})`;
-            ctx.beginPath();
-            ctx.arc(0, 0, curSize * 0.45, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.restore();
-
-            if (g.life >= g.maxLife) trophyGlints.splice(i, 1);
-        }
-
-        // D. Draw Soft Atmospheric Lightning
-        if (softLightning) {
-            ctx.strokeStyle = `rgba(215, 235, 255, ${softLightning.alpha})`;
-            ctx.lineWidth = 1.6;
-            ctx.beginPath();
-            for (let j = 0; j < softLightning.points.length; j++) {
-                const pt = softLightning.points[j];
-                if (j === 0) ctx.moveTo(pt.x, pt.y);
-                else ctx.lineTo(pt.x, pt.y);
-            }
-            ctx.stroke();
-            softLightning.alpha -= 0.025;
-            if (softLightning.alpha <= 0) softLightning = null;
-        }
-
-        // E. Draw Foreground Crystal Rain (Mưa cận cảnh sáng rõ)
-        for (const d of foregroundRain) {
-            ctx.strokeStyle = `rgba(255, 255, 255, ${d.opacity * 0.85})`;
-            ctx.lineWidth = d.thickness;
-            ctx.beginPath();
-            ctx.moveTo(d.x, d.y);
-            ctx.lineTo(d.x + d.angle * d.length, d.y + d.length);
-            ctx.stroke();
-
-            ctx.strokeStyle = `rgba(255, 255, 255, ${d.opacity * 0.95})`;
-            ctx.lineWidth = d.thickness * 0.45;
-            ctx.beginPath();
-            ctx.moveTo(d.x, d.y);
-            ctx.lineTo(d.x + d.angle * d.length * 0.65, d.y + d.length * 0.65);
-            ctx.stroke();
-
-            d.x += d.angle * d.speed;
-            d.y += d.speed;
-
-            if (d.y > height) {
-                if (Math.random() < 0.35) {
-                    splashes.push({
-                        x: d.x,
-                        y: height - 6 + Math.random() * 4,
-                        radius: 1.2,
-                        maxRadius: 4 + Math.random() * 5,
-                        opacity: 0.6,
-                    });
-                }
-                d.y = -30;
-                d.x = Math.random() * width + 50;
-            }
-        }
-
-        // F. Draw Bottom Splash Ripple Waves
-        for (let i = splashes.length - 1; i >= 0; i--) {
-            const sp = splashes[i];
-            ctx.strokeStyle = `rgba(255, 255, 255, ${sp.opacity * 0.75})`;
-            ctx.lineWidth = 1.1;
-            ctx.beginPath();
-            ctx.ellipse(sp.x, sp.y, sp.radius * 2.2, sp.radius * 0.65, 0, 0, Math.PI * 2);
-            ctx.stroke();
-
-            sp.radius += 0.45;
-            sp.opacity -= 0.035;
-            if (sp.opacity <= 0 || sp.radius >= sp.maxRadius) splashes.splice(i, 1);
-        }
-
-        // G. Draw 3D Stochastic Wet Glass Droplets & Organic Trickling Rivulets (Nhiễu nước ướt kính ngẫu nhiên)
-        for (let i = wetDrops.length - 1; i >= 0; i--) {
-            const wd = wetDrops[i];
-            wd.life++;
-
-            if (wd.opacity < wd.targetOpacity) {
-                wd.opacity = Math.min(wd.targetOpacity, wd.opacity + 0.05);
-            }
-
-            // Impact Ring Wave on Lens
-            if (wd.impactRingOpacity > 0 && wd.impactRingRadius < wd.impactRingMax) {
-                ctx.strokeStyle = `rgba(255, 255, 255, ${wd.impactRingOpacity * 0.7})`;
-                ctx.lineWidth = 1.3;
-                ctx.beginPath();
-                ctx.arc(wd.x, wd.y, wd.impactRingRadius, 0, Math.PI * 2);
-                ctx.stroke();
-                wd.impactRingRadius += 0.8;
-                wd.impactRingOpacity -= 0.045;
-            }
-
-            // Organic Movement Physics (Ngẫu nhiên không theo quy tắc):
-            if (wd.life > 12) {
-                // Hesitation / Pausing & Accelerating logic
-                wd.hesitationTimer++;
-                if (wd.hesitationTimer > wd.hesitationDuration) {
-                    wd.isHesitating = !wd.isHesitating;
-                    wd.hesitationTimer = 0;
-                    wd.hesitationDuration = wd.isHesitating ? (15 + Math.random() * 30) : (40 + Math.random() * 80);
-                }
-
-                if (!wd.isHesitating) {
-                    wd.speedY += wd.accelY;
-                    wd.y += wd.speedY;
-
-                    // Non-linear organic drift (nhiễu ngang tự nhiên)
-                    wd.driftNoisePhase += wd.driftNoiseSpeed;
-                    const noiseX = (Math.sin(wd.driftNoisePhase * 1.3) + Math.cos(wd.driftNoisePhase * 2.1)) * wd.driftStrength;
-                    wd.x += noiseX;
-
-                    // Record organic wet rivulet trail
-                    wd.trail.push({ x: wd.x, y: wd.y, r: wd.radius * 0.55, alpha: wd.opacity * 0.65 });
-                    if (wd.trail.length > 40) wd.trail.shift();
-                }
-            }
-
-            // 1. Render Organic Wet Rivulet Trail on Glass
-            if (wd.trail.length > 2) {
-                ctx.beginPath();
-                ctx.moveTo(wd.trail[0].x, wd.trail[0].y);
-                for (let k = 1; k < wd.trail.length; k++) {
-                    ctx.lineTo(wd.trail[k].x, wd.trail[k].y);
-                }
-                ctx.strokeStyle = `rgba(255, 255, 255, ${wd.opacity * 0.32})`;
-                ctx.lineWidth = wd.radius * 0.85;
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-                ctx.stroke();
-
-                // Glossy wet core line
-                ctx.strokeStyle = `rgba(255, 255, 255, ${wd.opacity * 0.65})`;
-                ctx.lineWidth = wd.radius * 0.3;
-                ctx.stroke();
-            }
-
-            // 2. Render 3D Crystal Water Droplet Dome
-            // A. Glass dome body
-            ctx.fillStyle = `rgba(235, 245, 255, ${wd.opacity * 0.3})`;
-            ctx.beginPath();
-            ctx.arc(wd.x, wd.y, wd.radius, 0, Math.PI * 2);
-            ctx.fill();
-
-            // B. Outer bright white translucent rim
-            ctx.strokeStyle = `rgba(255, 255, 255, ${wd.opacity * 0.88})`;
-            ctx.lineWidth = 1.4;
-            ctx.beginPath();
-            ctx.arc(wd.x, wd.y, wd.radius, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // C. Top-Left brilliant specular glare arc
-            ctx.strokeStyle = `rgba(255, 255, 255, ${wd.opacity * 0.98})`;
-            ctx.lineWidth = 1.9;
-            ctx.beginPath();
-            ctx.arc(wd.x - wd.radius * 0.25, wd.y - wd.radius * 0.25, wd.radius * 0.65, Math.PI * 0.75, Math.PI * 1.85);
-            ctx.stroke();
-
-            // D. Specular pinpoint starlet
-            ctx.fillStyle = `rgba(255, 255, 255, ${wd.opacity * 0.98})`;
-            ctx.beginPath();
-            ctx.arc(wd.x - wd.radius * 0.35, wd.y - wd.radius * 0.35, wd.radius * 0.24, 0, Math.PI * 2);
-            ctx.fill();
-
-            // E. Bottom-Right refraction lens shadow
-            ctx.strokeStyle = `rgba(2, 6, 20, ${wd.opacity * 0.65})`;
-            ctx.lineWidth = 1.4;
-            ctx.beginPath();
-            ctx.arc(wd.x, wd.y, wd.radius, 0, Math.PI * 0.65);
-            ctx.stroke();
-
-            if (wd.life > wd.maxLife || wd.y > height + 35) {
-                wd.opacity -= 0.02;
-                if (wd.opacity <= 0) wetDrops.splice(i, 1);
-            }
-        }
-
-        // Periodically trigger Paparazzi Flashbulbs (Mỗi 0.8 - 1.8s có đèn flash phóng viên chớp lóe)
-        flashbulbTimer++;
-        if (flashbulbTimer > 60) {
-            spawnPaparazziFlash();
-            flashbulbTimer = Math.floor(Math.random() * 30);
-        }
-
-        // Periodically trigger Trophy Glints (Ánh sáng lấp lánh phản chiếu trên cúp bạc C1)
-        glintTimer++;
-        if (glintTimer > 35) {
-            spawnTrophyGlint();
-            if (Math.random() < 0.4) spawnTrophyGlint(); // 2 glints at once occasionally
-            glintTimer = Math.floor(Math.random() * 20);
-        }
-
-        // Periodically spawn irregular wet screen drops
-        dropSpawnCounter++;
-        if (dropSpawnCounter > 170) {
-            if (wetDrops.length < 8) {
-                spawnOrganicWetDrop();
-            }
-            dropSpawnCounter = Math.floor(Math.random() * 50);
-        }
-
-        // Atmospheric soft lightning
-        if (Math.random() < 0.0008) {
-            triggerSoftLightning();
-        }
-
-        requestAnimationFrame(animate);
-    }
-
-    animate();
-}
-
-if (localStorage.getItem('auth')) {
-    setTimeout(initAtmosphericMoscowVFX, 200);
-}
-</script>
+<div class="toast-stack" id="toastStack"></div>
+<div class="modal-backdrop" id="modalRoot" hidden></div>
+
+<script src="{% static 'js/app.js' %}?v={{ asset_version }}" defer></script>
+<script src="{% static 'js/atmosphere.js' %}?v={{ asset_version }}" defer></script>
+<script src="{% static 'js/ws.js' %}?v={{ asset_version }}" defer></script>
+<script src="{% static 'js/chat.js' %}?v={{ asset_version }}" defer></script>
+<script src="{% static 'js/rooms.js' %}?v={{ asset_version }}" defer></script>
 </body>
 </html>

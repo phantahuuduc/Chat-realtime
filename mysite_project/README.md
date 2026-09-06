@@ -48,7 +48,7 @@
                                                │
                     ┌──────────────────────────▼─────────────────────────────────┐
                     │                   PostgreSQL 16                             │
-                    │  SELECT FOR UPDATE → sequence_number (ADR-003)             │
+                    │  UPDATE ... RETURNING → sequence_number (ADR-003)          │
                     │  UNIQUE constraints → idempotency                          │
                     └────────────────────────────────────────────────────────────┘
 ```
@@ -62,8 +62,12 @@
 | ASGI Server | **Daphne** (reference impl) | [ADR-001](docs/adr/001-chon-daphne-lam-asgi-server.md) |
 | Channel Layer | **Redis** (Pub/Sub fan-out) | [ADR-002](docs/adr/002-redis-channel-layer.md) |
 | Message Ordering | **DB-assigned sequence_number** | [ADR-003](docs/adr/003-sequence-number-do-db-cap.md) |
-| WS Authentication | **JWT via query string** | [ADR-004](docs/adr/004-jwt-auth-websocket-middleware.md) |
-| Database | **PostgreSQL 16** (row-level lock) | [ADR-005](docs/adr/005-postgresql-lam-database-chinh.md) |
+| WS Authentication | **JWT via subprotocol** `["chat.v1", token]` | [ADR-004](docs/adr/004-jwt-auth-websocket-middleware.md) |
+| Database | **PostgreSQL 16** (atomic increment) | [ADR-005](docs/adr/005-postgresql-lam-database-chinh.md) |
+| Static Files | **WhiteNoise** (CompressedStaticFilesStorage) | — |
+| Presence | **Redis TTL** (không job quét) | — |
+| Hiệu ứng nền | Canvas 2D thuần, một `requestAnimationFrame` loop | — |
+| Ảnh nền người dùng | Pillow (validate + resize ≤ 1920px) | — |
 | REST API | Django REST Framework | — |
 | Logging | structlog (JSON) | — |
 | Error Tracking | Sentry SDK | — |
@@ -75,7 +79,7 @@
 
 ### Core Real-time
 - ✅ **Chat nhóm & 1-1** qua WebSocket (Django Channels)
-- ✅ **Message ordering** — `sequence_number` do DB cấp (SELECT FOR UPDATE)
+- ✅ **Message ordering** — `sequence_number` do DB cấp bằng một câu `UPDATE ... RETURNING` atomic
 - ✅ **Idempotency** — `client_message_id` ngăn duplicate trên retry
 - ✅ **Offline sync** — Client gửi `last_seen_sequence`, server trả missed messages
 - ✅ **Typing indicator** — Realtime "đang gõ..." với animation dots
@@ -83,7 +87,8 @@
 - ✅ **Heartbeat/Presence** — online ⇄ away ⇄ offline lifecycle
 
 ### Security (Skill: api-security-best-practices)
-- ✅ **JWT Authentication** — Stateless, Bearer token cho REST + query param cho WS
+- ✅ **JWT Authentication** — Stateless, Bearer token cho REST + WebSocket subprotocol cho WS
+- ✅ **Origin validation** — `AllowedHostsOriginValidator` chặn Origin lạ
 - ✅ **TokenAuthMiddleware** — Chặn connection TRƯỚC khi vào consumer
 - ✅ **Membership authorization** — Chỉ member mới join conversation group
 - ✅ **Rate limiting** — 10 msg/sec/connection, configurable
@@ -152,6 +157,56 @@ python manage.py runserver
 
 ---
 
+## 🎨 Cấu trúc frontend
+
+```
+static/
+├── css/                  # nạp trực tiếp từ template theo đúng thứ tự này
+│   ├── tokens.css        # CHỈ chứa biến CSS
+│   ├── base.css          # reset, typography, nguyên tố dùng lại
+│   ├── atmosphere.css    # nền 4 tầng, scrim, chữ display, entrance
+│   └── components.css    # sidebar, header, message, composer, modal, toast
+├── js/
+│   ├── app.js            # window.App: util, toast/modal, auth, prefs, phím tắt
+│   ├── atmosphere.js     # canvas mưa/sao băng/bụi, preset nền  (1 rAF loop duy nhất)
+│   ├── ws.js             # WebSocket envelope, reconnect, chỉ báo kết nối
+│   ├── chat.js           # render message, optimistic send, gap buffer, tương tác
+│   └── rooms.js          # sidebar, tạo/join/rời phòng, panel phải
+└── icons.svg             # SVG sprite (inline vào body qua {% include %})
+```
+
+Bốn file CSS được nạp bằng 4 thẻ `<link>` riêng, mỗi thẻ mang `?v=<mốc thời gian>`.
+Trước đây chúng đi qua `main.css` với `@import`, nhưng URL trong `@import` không
+gắn được tham số phiên bản — tên file lại không băm — nên bản cũ nằm lại trong
+cache trình duyệt và mọi thay đổi CSS không bao giờ tới được người dùng.
+
+Nền gồm 4 tầng chồng nhau, tất cả `position: fixed`:
+ảnh (ken-burns 40s) → video mưa (`mix-blend-mode: screen`) → canvas → scrim nhiều lớp.
+
+Canvas chạy 8 hệ hạt trong cùng một loop: mưa 3 lớp thị sai, tàn lửa vàng,
+sao lấp lánh 4 cánh, đèn flash, sao băng (đầu sáng + đuôi + tia lửa), gợn nước
+đáy màn hình, chớp trời, và hạt hiệu ứng theo từ khoá.
+
+### Hiệu ứng theo từ khoá trong tin nhắn
+
+| Từ khoá | Hiệu ứng |
+|---------|----------|
+| yêu, thương, love, tim, ❤ | mưa trái tim |
+| mưa, rain, bão, ☔ | mưa rào đổ xuống |
+| tuyết, snow, lạnh, ❄ | tuyết rơi |
+| vô, vào, goal, siu, vô địch, ⚽ | pháo hoa 3 chùm |
+| chúc mừng, congrat, happy, 🎉 | kim tuyến |
+| sao, star, tuyệt, đỉnh, ✨ | loạt sao lấp lánh |
+
+Khớp theo ranh giới từ nên "sao" trong "ngôi sao" mới kích hoạt.
+Mỗi tin chỉ bắn một hiệu ứng dù chứa nhiều từ khoá.
+
+Hiệu năng: một `requestAnimationFrame` loop duy nhất, dừng hẳn khi tab ẩn,
+tắt khi `prefers-reduced-motion`, `devicePixelRatio` chặn ở 2, tự giảm 50% số hạt
+khi frame chậm quá 32ms liên tục 30 frame.
+
+---
+
 ## 📡 API Endpoints
 
 ### Authentication
@@ -172,6 +227,16 @@ python manage.py runserver
 | `GET` | `/api/conversations/{id}/` | Chi tiết conversation |
 | `GET` | `/api/conversations/{id}/messages/` | Lịch sử tin nhắn |
 | `GET` | `/api/conversations/{id}/messages/?after_sequence=N` | Offline sync |
+| `GET` | `/api/conversations/{id}/messages/?before_sequence=N&limit=50` | Tải tin cũ khi cuộn lên |
+| `GET` | `/api/rooms/public/` | Danh sách phòng công khai (phân trang) |
+| `POST` | `/api/rooms/join/` | Tham gia bằng `join_code` (hoặc `conversation_id` với phòng public) |
+| `POST` | `/api/rooms/{id}/leave/` | Rời phòng |
+| `GET` | `/api/rooms/{id}/members/` | Thành viên + presence, online xếp trước |
+| `POST` | `/api/rooms/{id}/members/{user_id}/remove/` | Đá thành viên (owner/admin) |
+| `GET` | `/api/rooms/{id}/messages/search/?q=` | Tìm tin nhắn trong phòng |
+| `GET` | `/api/preferences/` | Tuỳ chọn hiển thị (nền, hiệu ứng, âm thanh) |
+| `PATCH` | `/api/preferences/` | Cập nhật từng phần |
+| `POST` | `/api/preferences/background/` | Tải ảnh nền riêng (jpg/png/webp, ≤ 5MB) |
 | `GET` | `/api/notifications/` | Danh sách notifications |
 | `POST` | `/api/notifications/mark-read/` | Đánh dấu đã đọc |
 
@@ -183,45 +248,63 @@ python manage.py runserver
 
 | URL | Consumer | Auth |
 |-----|----------|------|
-| `ws://host/ws/chat/{conv_id}/?token=JWT` | ChatConsumer | Required |
-| `ws://host/ws/notifications/?token=JWT` | NotificationConsumer | Required |
+| `ws://host/ws/chat/` | ChatConsumer (một socket cho cả phiên) | Required |
+| `ws://host/ws/chat/{conv_id}/` | ChatConsumer, mở sẵn phòng khi connect | Required |
+| `ws://host/ws/notifications/` | NotificationConsumer | Required |
 
-### Message Types (Client → Server)
+Token đi qua subprotocol, KHÔNG qua query string:
 
-```json
-// Gửi tin nhắn
-{"type": "chat.message", "content": "Hello!", "client_message_id": "uuid"}
-
-// Typing indicator
-{"type": "chat.typing", "is_typing": true}
-
-// Đánh dấu đã đọc
-{"type": "chat.read", "message_id": 42}
-
-// Heartbeat (mỗi 15s)
-{"type": "chat.heartbeat"}
-
-// Offline sync
-{"type": "chat.sync", "last_seen_sequence": 5}
+```js
+new WebSocket("ws://host/ws/chat/", ["chat.v1", accessToken]);
 ```
 
-### Message Types (Server → Client)
+Mỗi socket chỉ join kênh riêng `user_<id>` và ĐÚNG một phòng đang mở.
+Đổi phòng bằng `room.open` → server `group_discard` phòng cũ, `group_add` phòng mới.
+
+### Envelope
+
+Mọi message hai chiều dùng đúng một cấu trúc:
 
 ```json
-// Tin nhắn mới (broadcast)
-{"type": "chat.message", "message": {"id": 1, "sequence_number": 1, "content": "...", ...}}
+{ "type": "message.new", "payload": { }, "client_message_id": "uuid|null" }
+```
 
-// Typing
-{"type": "chat.typing", "username": "user1", "is_typing": true}
+### Client → Server
 
-// Presence
-{"type": "chat.presence", "username": "user1", "status": "online"}
+```json
+{"type": "room.open",        "payload": {"conversation_id": 1}}
+{"type": "message.new",      "payload": {"conversation_id": 1, "content": "Hello!", "reply_to_id": null}, "client_message_id": "uuid"}
+{"type": "message.edited",   "payload": {"message_id": 42, "content": "..."}}
+{"type": "message.deleted",  "payload": {"message_id": 42}}
+{"type": "message.reaction", "payload": {"message_id": 42, "emoji": "🔥"}}
+{"type": "message.pinned",   "payload": {"message_id": 42}}
+{"type": "message.unpinned", "payload": {"message_id": 42}}
+{"type": "message.read",     "payload": {"conversation_id": 1, "sequence_number": 42}}
+{"type": "typing.start",     "payload": {"conversation_id": 1}}
+{"type": "typing.stop",      "payload": {"conversation_id": 1}}
+{"type": "sync.request",     "payload": {"conversation_id": 1, "after_sequence": 5}}
+{"type": "heartbeat.ping",   "payload": {}}
+```
 
-// Heartbeat response
-{"type": "chat.pong"}
+### Server → Client
 
-// Offline sync response
-{"type": "chat.sync_response", "messages": [...]}
+```json
+{"type": "message.new",      "payload": { /* message */ }}
+{"type": "message.ack",      "payload": {"message_id": 1, "sequence_number": 1, "server_time": "...", "duplicate": false}, "client_message_id": "uuid"}
+{"type": "message.edited",   "payload": { /* message */ }}
+{"type": "message.deleted",  "payload": {"message_id": 42, "conversation_id": 1}}
+{"type": "message.reaction", "payload": {"message_id": 42, "emoji": "🔥", "action": "added", "reactions": [...]}}
+{"type": "message.pinned",   "payload": {"message_id": 42, "is_pinned": true, "pinned_by": "duc"}}
+{"type": "message.unpinned", "payload": {"message_id": 42, "is_pinned": false}}
+{"type": "message.preview",  "payload": {"message_id": 42, "preview": {"url": "...", "title": "...", "image": "..."}}}
+{"type": "message.read",     "payload": {"conversation_id": 1, "user_id": 2, "sequence_number": 42}}
+{"type": "typing.start"}     {"type": "typing.stop"}
+{"type": "presence.update",  "payload": {"user_id": 2, "status": "online"}}
+{"type": "member.joined"}    {"type": "member.left"}
+{"type": "room.created"}     {"type": "room.deleted"}
+{"type": "sync.response",    "payload": {"messages": [...], "has_more": false}}
+{"type": "heartbeat.pong",   "payload": {"server_time": 1234567890.0}}
+{"type": "error",            "payload": {"code": "RATE_LIMITED", "message": "...", "retry_after": 1}}
 
 // Notification
 {"type": "notification", "notification": {"title": "...", "body": "..."}}
@@ -253,8 +336,13 @@ python manage.py test chat --verbosity=2
 | Layer | Test Cases | Mô tả |
 |-------|-----------|-------|
 | Model Unit | 7 tests | UNIQUE constraints, ordering, presence states, multi-device |
-| REST API | 10 tests | Auth register/login/refresh, CRUD, offline sync, authorization |
-| WebSocket | 5 tests | Connect/auth/send/idempotency/heartbeat/offline-sync |
+| Service Layer | 5 tests | Idempotency trước khi cấp sequence, reply/edit/delete, reaction toggle, sync limit |
+| Concurrency | 2 tests | `TransactionTestCase` — 20 thread song song, cùng `client_message_id` song song |
+| Ghim tin nhắn | 4 tests | Quyền owner/admin/tác giả, xoá tin thì bỏ ghim |
+| Link preview | 6 tests | Bắt URL, chặn host nội bộ, parse OG, chặn scheme lạ |
+| Preferences | 9 tests | GET/PATCH, validate scrim, upload ảnh giả/quá cỡ/hợp lệ, resize |
+| REST API | 18 tests | Auth, CRUD, join code, phòng public, rời phòng, đá member, search, phân trang |
+| WebSocket | 9 tests | Envelope, ack, idempotency, heartbeat, sync, typing, quyền phòng, giới hạn độ dài |
 
 ### Load Test (Plan Section 9.2)
 

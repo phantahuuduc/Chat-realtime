@@ -1,0 +1,206 @@
+/* =====================================================================
+   atmosphere.css — nền 4 tầng, scrim, ánh sáng, animation nền
+   ===================================================================== */
+
+.atmos {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* --- Tầng 1: ảnh nền + ken burns --------------------------------------- */
+
+.atmos__image {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: var(--atmos-image);
+  background-color: var(--atmos-tint);
+  background-size: cover;
+  background-position: center;
+  opacity: var(--atmos-image-opacity);
+  filter: brightness(.74) saturate(1.12) contrast(1.06);
+  transform: scale(1.06);
+  animation: ken-burns 40s var(--ease-soft) infinite alternate;
+  transition: opacity var(--t-slow) var(--ease-out);
+}
+
+/* Lớp thứ hai dùng cho crossfade khi đổi nền: fade lớp mới đè lên lớp cũ. */
+.atmos__image--next { opacity: 0; animation: none; }
+.atmos--swapping .atmos__image--next { opacity: var(--atmos-image-opacity); }
+
+@keyframes ken-burns {
+  from { transform: scale(1.06) translate3d(0, 0, 0); }
+  to   { transform: scale(1.12) translate3d(-1.2%, -.8%, 0); }
+}
+
+/* --- Tầng 2: video mưa -------------------------------------------------- */
+
+.atmos__video {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: .3;
+  mix-blend-mode: screen;
+  transform: scale(1.25);   /* thu nhỏ giọt nước, bớt cảm giác kính bẩn */
+  transition: opacity var(--t-slow) var(--ease-out);
+}
+
+body.no-video .atmos__video,
+body.atmos-no-rain .atmos__video { opacity: 0; }
+
+/* --- Tầng 3: canvas ----------------------------------------------------- */
+
+.atmos__canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* --- Tầng 4: scrim nhiều tầng ------------------------------------------ */
+
+.atmos__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background:
+    /* bầu trời đêm châu Âu: xanh thẫm phủ hẳn nửa trên khung */
+    linear-gradient(to bottom,
+      var(--sky-deep) 0%, var(--sky-mid) 34%, transparent 68%),
+    /* nguồn sáng ấm hắt từ góc phải trên — đèn sân vận động */
+    radial-gradient(72% 56% at 80% 16%, var(--scrim-warm) 0%, transparent 62%),
+    /* sắc tím lạnh dưới đáy trái, cân lại tông ấm */
+    radial-gradient(60% 50% at 10% 96%, var(--scrim-cool) 0%, transparent 66%),
+    /* tối đậm bên trái cho chữ, nhả dần sang phải để CR7 hiện rõ */
+    linear-gradient(to right,
+      rgba(5, 6, 15, .94) 0%, rgba(5, 6, 15, .72) 28%,
+      rgba(5, 6, 15, .4) 52%, rgba(5, 6, 15, .14) 76%, rgba(5, 6, 15, .06) 100%),
+    linear-gradient(to bottom, rgba(5, 6, 15, .28) 0%, transparent 38%,
+      transparent 56%, rgba(5, 6, 15, .86) 100%);
+}
+
+/* =====================================================================
+   Chữ display — neon nhiều tầng, lấp lánh, lơ lửng
+   ===================================================================== */
+
+/* Chữ display phát sáng kiểu neon: lõi trắng, quầng vàng nhiều tầng,
+   cộng bóng đen để luôn đọc được khi nằm trên ảnh sáng. */
+/* Quầng sáng phải BÁM THEO NÉT CHỮ.
+   Bán kính lớn (>20px) trên chữ ngắn làm quầng của từng chữ cái nhập vào
+   nhau thành một khối chữ nhật — trông y như bôi highlight. Giữ mọi tầng
+   dưới 12px thì ánh sáng ôm lấy nét chữ. */
+.display-text {
+  font-family: var(--font-display);
+  font-weight: 400;
+  color: #fff;
+  text-shadow:
+    0 0 1px rgba(255, 255, 255, .95),
+    0 0 4px rgba(255, 241, 199, .75),
+    0 0 9px rgba(247, 224, 137, .45),
+    0 1px 3px rgba(0, 0, 0, .95),
+    0 2px 10px rgba(0, 0, 0, .7);
+}
+
+/* Nhấp nháy như ngôi sao. Chỉ animate opacity của một lớp phủ — không
+   animate text-shadow, tránh repaint nặng mỗi frame. */
+.display-text--star {
+  position: relative;
+  isolation: isolate;
+}
+
+/* Hai lớp quầng lệch nhịp -> ánh sáng thở chứ không nhấp nháy đều đặn. */
+.display-text--star::before,
+.display-text--star::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  color: transparent;
+  pointer-events: none;
+}
+
+.display-text--star::before {
+  text-shadow:
+    0 0 2px rgba(255, 255, 255, .95),
+    0 0 7px var(--accent-bright),
+    0 0 12px rgba(247, 224, 137, .5);
+  animation: twinkle 3.4s var(--ease-soft) infinite;
+}
+
+.display-text--star::after {
+  text-shadow:
+    0 0 3px rgba(255, 255, 255, .7),
+    0 0 11px rgba(255, 157, 61, .55);
+  animation: twinkle 5.2s var(--ease-soft) infinite reverse;
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: .22; }
+  50%      { opacity: 1; }
+}
+
+.display-text--float {
+  animation: float 9s var(--ease-soft) infinite alternate;
+}
+
+@keyframes float {
+  from { transform: translateY(0) rotate(-.15deg); }
+  to   { transform: translateY(-6px) rotate(.15deg); }
+}
+
+/* =====================================================================
+   Entrance
+   ===================================================================== */
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); filter: blur(6px); }
+  to   { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+.rise { animation: rise .7s var(--ease-out) both; }
+.rise:nth-child(1) { animation-delay: .05s; }
+.rise:nth-child(2) { animation-delay: .13s; }
+.rise:nth-child(3) { animation-delay: .21s; }
+.rise:nth-child(4) { animation-delay: .29s; }
+
+/* =====================================================================
+   Giảm chuyển động — tắt canvas và mọi animation lặp
+   ===================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .atmos__canvas,
+  .atmos__video { display: none; }
+
+  .atmos__image { animation: none; transform: none; }
+
+  .display-text--star::before,
+  .display-text--star::after,
+  .display-text--float { animation: none; }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 150ms !important;
+  }
+}
+
+body.reduced-motion .atmos__canvas,
+body.reduced-motion .atmos__video { display: none; }
+
+body.reduced-motion .atmos__image { animation: none; transform: none; }
+
+body.reduced-motion .display-text--star::before,
+body.reduced-motion .display-text--star::after,
+body.reduced-motion .display-text--float,
+body.reduced-motion .conn-dot::after,
+body.reduced-motion .typing-dots__dot { animation: none; }

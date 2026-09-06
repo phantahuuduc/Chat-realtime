@@ -1,26 +1,29 @@
 """
-WebSocket Authentication Middleware (ADR-004).
-Authenticates JWT token from query string BEFORE reaching consumer.
-Rejects unauthenticated connections with close code 4001.
-Skill: api-security-best-practices
-"""
+WebSocket Authentication Middleware (ADR-004 + mục 5.6).
 
-from urllib.parse import parse_qs
+Token đi qua Sec-WebSocket-Protocol, KHÔNG qua query string:
+    new WebSocket(url, ["chat.v1", token])
+=> scope['subprotocols'] == ['chat.v1', '<jwt>']
+
+Query string bị loại bỏ vì token lộ trong access log, Referer và lịch sử proxy.
+Kết nối thiếu/sai token bị đóng với close code 4001 trước khi tới consumer.
+"""
 
 import jwt
 import structlog
 from channels.db import database_sync_to_async
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import AnonymousUser
 
 logger = structlog.get_logger('chat')
 User = get_user_model()
 
+WS_SUBPROTOCOL = 'chat.v1'
+
 
 @database_sync_to_async
 def get_user_from_token(token):
-    """Decode JWT and return the user, or None if invalid."""
+    """Decode JWT và trả về user, None nếu token không hợp lệ."""
     try:
         payload = jwt.decode(
             token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM],
@@ -32,13 +35,24 @@ def get_user_from_token(token):
         return None
 
 
+def _extract_token(scope):
+    """
+    Lấy token từ subprotocols. Quy ước: phần tử đầu là 'chat.v1',
+    phần tử thứ hai là access token.
+    """
+    subprotocols = [str(p).strip() for p in scope.get('subprotocols') or []]
+    if WS_SUBPROTOCOL not in subprotocols:
+        return None
+    for value in subprotocols:
+        if value != WS_SUBPROTOCOL and value:
+            return value
+    return None
+
+
 class TokenAuthMiddleware:
     """
-    ASGI middleware that authenticates WebSocket connections via JWT.
-    Token is passed as query parameter: ws://host/ws/chat/?token=<jwt>
-
-    If token is missing or invalid, connection is rejected with close code 4001.
-    This ensures NO anonymous connections reach business consumers.
+    ASGI middleware xác thực WebSocket bằng JWT lấy từ subprotocol.
+    Không có kết nối ẩn danh nào chạm tới consumer nghiệp vụ.
     """
 
     def __init__(self, app):
@@ -48,16 +62,13 @@ class TokenAuthMiddleware:
         if scope['type'] != 'websocket':
             return await self.app(scope, receive, send)
 
-        query_string = scope.get('query_string', b'').decode('utf-8')
-        params = parse_qs(query_string)
-        token_list = params.get('token', [])
-
-        if not token_list:
+        token = _extract_token(scope)
+        if not token:
             logger.warning('ws.auth.missing_token')
             await send({'type': 'websocket.close', 'code': 4001})
             return
 
-        user = await get_user_from_token(token_list[0])
+        user = await get_user_from_token(token)
         if user is None:
             logger.warning('ws.auth.invalid_token')
             await send({'type': 'websocket.close', 'code': 4001})
@@ -69,7 +80,7 @@ class TokenAuthMiddleware:
 
 
 class TokenAuthMiddlewareStack:
-    """Convenience wrapper to apply TokenAuthMiddleware to URL routing."""
+    """Wrapper tiện dụng để bọc URLRouter."""
 
     def __init__(self, app):
         self.app = TokenAuthMiddleware(app)

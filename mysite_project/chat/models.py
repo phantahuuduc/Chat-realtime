@@ -8,6 +8,7 @@ Chat Models — Real-time Team Chat & Notification Platform
 Skill applied: database-design (schema design, indexing, constraints)
 """
 
+import secrets
 import uuid
 
 from django.conf import settings
@@ -28,8 +29,23 @@ class Conversation(models.Model):
         (TYPE_GROUP, 'Group Chat'),
     ]
 
+    VISIBILITY_PUBLIC = 'public'
+    VISIBILITY_PRIVATE = 'private'
+    VISIBILITY_CHOICES = [
+        (VISIBILITY_PUBLIC, 'Public'),
+        (VISIBILITY_PRIVATE, 'Private'),
+    ]
+
     name = models.CharField(max_length=255, blank=True, default='')
     type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_GROUP)
+    visibility = models.CharField(
+        max_length=10, choices=VISIBILITY_CHOICES, default=VISIBILITY_PRIVATE,
+    )
+    description = models.CharField(max_length=255, blank=True, default='')
+    join_code = models.CharField(
+        max_length=6, unique=True, null=True, blank=True,
+        help_text='Mã tham gia 6 ký tự alphanumeric viết hoa.',
+    )
     last_sequence = models.BigIntegerField(default=0)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -50,6 +66,21 @@ class Conversation(models.Model):
     def group_name(self):
         """Channel Layer group name for this conversation."""
         return f'conversation_{self.pk}'
+
+    @staticmethod
+    def group_name_for(conversation_id):
+        """Group name không cần load object."""
+        return f'conversation_{conversation_id}'
+
+    @staticmethod
+    def generate_join_code():
+        """Sinh join_code 6 ký tự alphanumeric viết hoa, unique."""
+        alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'  # bỏ I O 0 1 dễ nhầm
+        for _ in range(50):
+            code = ''.join(secrets.choice(alphabet) for _ in range(6))
+            if not Conversation.objects.filter(join_code=code).exists():
+                return code
+        raise RuntimeError('Không sinh được join_code duy nhất.')
 
 
 class ConversationMember(models.Model):
@@ -105,6 +136,19 @@ class Message(models.Model):
     sequence_number = models.BigIntegerField()
     client_message_id = models.UUIDField(default=uuid.uuid4)
     content = models.TextField(max_length=5000)
+    reply_to = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='replies',
+    )
+    edited_at = models.DateTimeField(null=True, blank=True)
+    is_deleted = models.BooleanField(default=False)
+    is_pinned = models.BooleanField(default=False)
+    pinned_at = models.DateTimeField(null=True, blank=True)
+    pinned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='pinned_messages',
+    )
+    preview = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -128,6 +172,36 @@ class Message(models.Model):
 
     def __str__(self):
         return f'Msg #{self.sequence_number} in {self.conversation_id}'
+
+
+class MessageReaction(models.Model):
+    """
+    Reaction emoji trên một message.
+    UNIQUE(message, user, emoji) — bấm lại là toggle, không tạo dòng thứ 2.
+    """
+
+    message = models.ForeignKey(
+        Message, on_delete=models.CASCADE, related_name='reactions',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='reactions',
+    )
+    emoji = models.CharField(max_length=16)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['message', 'user', 'emoji'],
+                name='unique_message_reaction',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['message'], name='idx_reaction_message'),
+        ]
+
+    def __str__(self):
+        return f'{self.user} {self.emoji} on {self.message_id}'
 
 
 class MessageReadReceipt(models.Model):

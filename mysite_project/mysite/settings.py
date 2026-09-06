@@ -59,6 +59,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # WhiteNoise phải nằm ngay sau SecurityMiddleware để serve static ổn định
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -72,13 +74,16 @@ ROOT_URLCONF = 'mysite.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'],
+        # static/ nằm trong DIRS để `{% include "icons.svg" %}` inline được
+        # sprite (currentColor không kế thừa qua <use href> ngoài tài liệu).
+        'DIRS': [BASE_DIR / 'templates', BASE_DIR / 'static'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'mysite.context_processors.asset_version',
             ],
         },
     },
@@ -185,9 +190,38 @@ USE_TZ = True
 # Static Files
 # =============================================================================
 
-STATIC_URL = 'static/'
-STATICFILES_DIRS = [BASE_DIR / 'static']
+STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_DIRS = [BASE_DIR / 'static']
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+
+def _asset_version():
+    """Mốc thời gian sửa mới nhất của static/css + static/js."""
+    latest = 0
+    for folder in ('css', 'js'):
+        directory = BASE_DIR / 'static' / folder
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            if path.is_file():
+                latest = max(latest, int(path.stat().st_mtime))
+    return str(latest)
+
+
+ASSET_VERSION = _asset_version()
+
+# CompressedStaticFilesStorage (KHÔNG dùng Manifest — manifest sẽ 500 nếu
+# thiếu bất kỳ file nào được tham chiếu).
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
+# Tên file static KHÔNG băm (CompressedStaticFilesStorage), nên không được
+# cache dài — nếu không, bản build mới sẽ không tới được trình duyệt.
+WHITENOISE_MAX_AGE = 0 if DEBUG else 3600
 
 
 # =============================================================================
@@ -305,14 +339,27 @@ if SENTRY_DSN:
 # Chat Platform Settings
 # =============================================================================
 
-# Presence timeouts (seconds) — see Plan section 4
-PRESENCE_AWAY_TIMEOUT = 60       # seconds without heartbeat → away
-PRESENCE_OFFLINE_TIMEOUT = 120   # seconds without heartbeat → offline
-HEARTBEAT_INTERVAL = 15          # client should send ping every N seconds
+# Redis (presence TTL + channel layer)
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+
+# Presence — Redis TTL state machine (mục 5.7). Tham số chốt cứng.
+HEARTBEAT_INTERVAL = 20          # client ping mỗi 20s
+PRESENCE_AWAY_TIMEOUT = 45       # 45s không heartbeat → away
+PRESENCE_OFFLINE_TIMEOUT = 90    # 90s không heartbeat → offline
+
+# Xem trước liên kết (mục 7.5)
+LINK_PREVIEW_TIMEOUT = 3         # giây, fetch quá thì bỏ qua
+LINK_PREVIEW_CACHE_TTL = 86400   # cache Redis 24h
+LINK_PREVIEW_MAX_BYTES = 512000  # chỉ đọc 500KB đầu của trang
 
 # Rate limiting
-MESSAGE_RATE_LIMIT = 10          # max messages per second per connection
-MESSAGE_MAX_LENGTH = 5000        # max characters per message
+MESSAGE_RATE_LIMIT = 10          # tin nhắn tối đa mỗi giây mỗi kết nối
+MESSAGE_MAX_LENGTH = 5000        # ký tự tối đa mỗi tin nhắn
+
+# Vòng đời tin nhắn
+MESSAGE_EDIT_WINDOW_SECONDS = 15 * 60   # chỉ sửa được trong 15 phút
+OFFLINE_SYNC_LIMIT = 200                # tối đa 200 message mỗi lần sync (mục 5.9)
+READ_RECEIPT_THROTTLE_SECONDS = 1.0     # broadcast read receipt 1 lần/giây/phòng
 
 # Email (keep console backend for development)
 MAILERS = {

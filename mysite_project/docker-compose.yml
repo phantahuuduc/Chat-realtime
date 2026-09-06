@@ -57,8 +57,10 @@ services:
     cpus: 1.0
     volumes:
       - .:/app
+      - staticfiles:/app/staticfiles
     working_dir: /app
 
 volumes:
   postgres_data:
   redis_data:
+  staticfiles:

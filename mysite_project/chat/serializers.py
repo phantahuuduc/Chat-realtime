@@ -50,7 +50,8 @@ class MessageSerializer(serializers.ModelSerializer):
         model = Message
         fields = [
             'id', 'conversation', 'sender', 'sequence_number',
-            'client_message_id', 'content', 'created_at',
+            'client_message_id', 'content', 'reply_to', 'edited_at',
+            'is_deleted', 'is_pinned', 'preview', 'created_at',
         ]
         read_only_fields = ['id', 'sequence_number', 'created_at']
 
@@ -67,8 +68,8 @@ class ConversationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Conversation
         fields = [
-            'id', 'name', 'type', 'members', 'last_message',
-            'unread_count', 'created_at', 'updated_at',
+            'id', 'name', 'type', 'visibility', 'description', 'join_code',
+            'members', 'last_message', 'unread_count', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -85,22 +86,42 @@ class ConversationSerializer(serializers.ModelSerializer):
         last_read = MessageReadReceipt.objects.filter(
             message__conversation=obj, user=request.user,
         ).order_by('-message__sequence_number').first()
+        base = obj.messages.filter(is_deleted=False).exclude(sender=request.user)
         if last_read:
-            return obj.messages.filter(
+            return base.filter(
                 sequence_number__gt=last_read.message.sequence_number,
-            ).exclude(sender=request.user).count()
-        return obj.messages.exclude(sender=request.user).count()
+            ).count()
+        return base.count()
 
 
 class ConversationCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False, default='')
     type = serializers.ChoiceField(choices=Conversation.TYPE_CHOICES, default='group')
+    visibility = serializers.ChoiceField(
+        choices=Conversation.VISIBILITY_CHOICES, default='private',
+    )
+    description = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, default='',
+    )
     member_ids = serializers.ListField(
         child=serializers.IntegerField(), required=False, default=list,
     )
     member_usernames = serializers.ListField(
         child=serializers.CharField(), required=False, default=list,
     )
+
+
+class JoinCodeSerializer(serializers.Serializer):
+    """Tham gia bằng mã 6 ký tự, hoặc bằng id với phòng public."""
+    join_code = serializers.CharField(
+        min_length=6, max_length=6, required=False, allow_blank=True,
+    )
+    conversation_id = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        if not attrs.get('join_code') and not attrs.get('conversation_id'):
+            raise serializers.ValidationError('Cần join_code hoặc conversation_id.')
+        return attrs
 
 
 class NotificationSerializer(serializers.ModelSerializer):

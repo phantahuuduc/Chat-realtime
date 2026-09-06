@@ -1,133 +1,125 @@
 """
-Chat Consumers — Core real-time business logic.
-Implements Plan Sections 2.3, 4, 5.2 (connection lifecycle, message ordering,
-idempotency, presence, notifications, offline sync, rate limiting).
+Chat Consumers — logic real-time.
 
-Skills applied:
-- systematic-debugging: structured logging for every state transition
-- api-security-best-practices: rate limiting, authorization, input sanitization
+Envelope thống nhất hai chiều (mục 5.11):
+
+    { "type": "message.new", "payload": { ... }, "client_message_id": "uuid|null" }
+
+Topology group (mục 5.8): mỗi socket chỉ join kênh riêng `user_<id>` và ĐÚNG
+một phòng đang mở. Đổi phòng -> group_discard phòng cũ, group_add phòng mới.
+
+Mọi truy vấn ORM đều đi qua `database_sync_to_async` (mục 5.4).
+Mọi group_send đều đi qua `safe_group_send` (mục 5.10).
 """
 
+import asyncio
 import time
 import uuid
 
-import bleach
 import structlog
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.conf import settings
-from django.db import IntegrityError, transaction
-from django.utils import timezone
 
-from .models import (
-    Conversation,
-    ConversationMember,
-    Message,
-    Notification,
-    PresenceStatus,
-    UserConnection,
-)
+from . import linkpreview, presence, services
+from .broadcast import safe_group_send
+from .middleware import WS_SUBPROTOCOL
+from .models import Conversation, PresenceStatus
 
 logger = structlog.get_logger('chat')
+
+# Close codes riêng
+CLOSE_UNAUTHENTICATED = 4001
+CLOSE_FORBIDDEN = 4003
+
+
+def envelope(msg_type, payload=None, client_message_id=None):
+    """Dựng envelope chuẩn."""
+    return {
+        'type': msg_type,
+        'payload': payload or {},
+        'client_message_id': client_message_id,
+    }
+
+
+def user_group(user_id):
+    return f'user_{user_id}'
 
 
 class ChatConsumer(AsyncJsonWebsocketConsumer):
     """
-    Main chat consumer handling:
-    - Connection lifecycle (connect/disconnect with UserConnection tracking)
-    - Message sending with ordering (sequence_number) and idempotency
-    - Typing indicator with debounce
-    - Read receipts
-    - Presence updates (online/away/offline via heartbeat)
-    - Rate limiting per connection
-    - Offline sync on reconnect
+    Một socket duy nhất cho cả phiên:
+    - kênh `user_<id>`: presence, notification liên phòng, room.created/deleted
+    - phòng đang mở: message/typing/read/reaction
+
+    `conversation_id` trong URL là tuỳ chọn; có thì mở sẵn phòng đó khi connect.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.conversation_id = None
-        self.conversation = None
         self.user = None
-        self._message_timestamps = []  # For rate limiting
+        self.device_id = None
+        self.conversation_id = None
+        self.conversation_group = None
+        self._message_timestamps = []
 
     # -----------------------------------------------------------------------
-    # Connection Lifecycle
+    # Lifecycle
     # -----------------------------------------------------------------------
 
     async def connect(self):
-        self.conversation_id = self.scope['url_route']['kwargs']['conversation_id']
         self.user = self.scope.get('user')
-
         if not self.user or not self.user.is_authenticated:
-            await self.close(code=4001)
+            await self.close(code=CLOSE_UNAUTHENTICATED)
             return
 
-        # Authorization: check membership (Plan Section 6)
-        is_member = await self._check_membership()
-        if not is_member:
-            logger.warning(
-                'group.join_rejected',
-                user_id=self.user.pk,
-                conversation_id=self.conversation_id,
-            )
-            await self.close(code=4003)
-            return
-
-        await self.accept()
-
-        # Join conversation group
-        self.conversation = await self._get_conversation()
-        await self.channel_layer.group_add(
-            self.conversation.group_name, self.channel_name,
+        subprotocol = (
+            WS_SUBPROTOCOL
+            if WS_SUBPROTOCOL in (self.scope.get('subprotocols') or [])
+            else None
         )
+        await self.accept(subprotocol)
 
-        # Join user's personal notification group
-        await self.channel_layer.group_add(
-            f'user_{self.user.pk}', self.channel_name,
-        )
+        self.device_id = self.channel_name.rsplit('!', 1)[-1] or self.channel_name
+        await self.channel_layer.group_add(user_group(self.user.pk), self.channel_name)
 
-        # Track connection + update presence
-        await self._create_connection()
-        await self._set_presence('online')
-
-        # Broadcast presence to conversation members
-        await self._broadcast_presence('online')
+        await presence.touch(self.user.pk, self.device_id)
+        await self._set_presence_db(presence.ONLINE)
+        await self._broadcast_presence(presence.ONLINE)
 
         logger.info(
             'connection.established',
             user_id=self.user.pk,
-            conversation_id=self.conversation_id,
-            channel_name=self.channel_name,
+            device_id=self.device_id,
         )
 
-        # Send connection confirmation with conversation info
-        await self.send_json({
-            'type': 'connection.established',
-            'conversation_id': self.conversation_id,
-            'user_id': self.user.pk,
-            'username': self.user.username,
-        })
+        # Phòng mở sẵn theo URL (giữ tương thích /ws/chat/<id>/).
+        # Socket gắn cứng vào một phòng mà không có quyền thì đóng hẳn với
+        # close code riêng; socket multiplex chỉ nhận envelope `error`.
+        initial = self.scope.get('url_route', {}).get('kwargs', {}).get('conversation_id')
+        if initial is not None:
+            opened = await self._open_room(int(initial))
+            if not opened:
+                await self.close(code=CLOSE_FORBIDDEN)
 
     async def disconnect(self, close_code):
-        if not self.user or not self.conversation:
+        if not self.user or not self.user.is_authenticated:
             return
 
-        # Remove from groups
+        if self.conversation_group:
+            await self.channel_layer.group_discard(
+                self.conversation_group, self.channel_name,
+            )
         await self.channel_layer.group_discard(
-            self.conversation.group_name, self.channel_name,
-        )
-        await self.channel_layer.group_discard(
-            f'user_{self.user.pk}', self.channel_name,
+            user_group(self.user.pk), self.channel_name,
         )
 
-        # Remove connection record
-        await self._delete_connection()
-
-        # Check if user has any other active connections
-        has_connections = await self._user_has_connections()
-        if not has_connections:
-            await self._set_presence('offline')
-            await self._broadcast_presence('offline')
+        # Bỏ marker online của device này; key away còn TTL nên user
+        # chuyển sang `away` trước khi thành `offline` (mục 5.7).
+        await presence.drop(self.user.pk, self.device_id)
+        status = await presence.get_status(self.user.pk) or presence.OFFLINE
+        await self._set_presence_db(status)
+        await self._broadcast_presence(status)
 
         logger.info(
             'connection.closed',
@@ -137,462 +129,506 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         )
 
     # -----------------------------------------------------------------------
-    # Message Routing
+    # Inbound routing
     # -----------------------------------------------------------------------
 
     async def receive_json(self, content, **kwargs):
+        if not isinstance(content, dict):
+            await self._error('BAD_ENVELOPE', 'Envelope phải là JSON object.')
+            return
+
         msg_type = content.get('type', '')
+        payload = content.get('payload') or {}
+        client_message_id = content.get('client_message_id')
+
         handlers = {
-            'chat.message': self._handle_chat_message,
-            'chat.typing': self._handle_typing,
-            'chat.read': self._handle_read_receipt,
-            'chat.heartbeat': self._handle_heartbeat,
-            'chat.sync': self._handle_offline_sync,
+            'room.open': self._on_room_open,
+            'message.new': self._on_message_new,
+            'message.edited': self._on_message_edit,
+            'message.deleted': self._on_message_delete,
+            'message.reaction': self._on_message_reaction,
+            'message.read': self._on_message_read,
+            'message.pinned': self._on_message_pin,
+            'message.unpinned': self._on_message_unpin,
+            'typing.start': self._on_typing_start,
+            'typing.stop': self._on_typing_stop,
+            'sync.request': self._on_sync_request,
+            'heartbeat.ping': self._on_heartbeat,
         }
         handler = handlers.get(msg_type)
-        if handler:
-            await handler(content)
-        else:
-            await self.send_json({
-                'type': 'error',
-                'message': f'Unknown message type: {msg_type}',
-            })
+        if handler is None:
+            await self._error('UNKNOWN_TYPE', f'Không hỗ trợ type: {msg_type}')
+            return
+        await handler(payload, client_message_id)
 
     # -----------------------------------------------------------------------
-    # Chat Message (ordering + idempotency)
+    # room.open — mục 5.8
     # -----------------------------------------------------------------------
 
-    async def _handle_chat_message(self, content):
-        # Rate limiting (Plan Section 4.5)
-        if not self._check_rate_limit():
+    async def _on_room_open(self, payload, client_message_id=None):
+        conversation_id = payload.get('conversation_id')
+        if conversation_id is None:
+            await self._error('BAD_PAYLOAD', 'Thiếu conversation_id.')
+            return
+        await self._open_room(int(conversation_id), client_message_id)
+
+    async def _open_room(self, conversation_id, client_message_id=None):
+        if not await self._is_member(conversation_id):
+            logger.warning(
+                'group.join_rejected',
+                user_id=self.user.pk,
+                conversation_id=conversation_id,
+            )
+            await self._error(
+                'ROOM_FORBIDDEN',
+                'Bạn không có quyền vào phòng này.',
+                extra={'conversation_id': conversation_id},
+            )
+            return False
+
+        if self.conversation_group:
+            await self.channel_layer.group_discard(
+                self.conversation_group, self.channel_name,
+            )
+
+        self.conversation_id = conversation_id
+        self.conversation_group = Conversation.group_name_for(conversation_id)
+        await self.channel_layer.group_add(self.conversation_group, self.channel_name)
+
+        members = await self._member_list(conversation_id)
+        await self.send_json(envelope(
+            'member.joined',
+            {
+                'conversation_id': conversation_id,
+                'user_id': self.user.pk,
+                'username': self.user.username,
+                'members': members,
+            },
+            client_message_id,
+        ))
+        logger.info(
+            'room.opened', user_id=self.user.pk, conversation_id=conversation_id,
+        )
+        return True
+
+    # -----------------------------------------------------------------------
+    # message.new + message.ack
+    # -----------------------------------------------------------------------
+
+    async def _on_message_new(self, payload, client_message_id=None):
+        conversation_id = payload.get('conversation_id') or self.conversation_id
+        if conversation_id is None or int(conversation_id) != self.conversation_id:
+            await self._error('ROOM_NOT_OPEN', 'Phòng chưa được mở trên kết nối này.')
+            return
+
+        allowed, retry_after = self._check_rate_limit()
+        if not allowed:
             logger.warning(
                 'message.rate_limited',
                 user_id=self.user.pk,
-                conversation_id=self.conversation_id,
+                conversation_id=conversation_id,
             )
-            await self.send_json({
-                'type': 'error',
-                'code': 'RATE_LIMITED',
-                'message': 'Too many messages. Please slow down.',
-            })
+            await self._error(
+                'RATE_LIMITED',
+                f'Gửi quá nhanh, chờ {retry_after}s.',
+                extra={'retry_after': retry_after},
+                client_message_id=client_message_id,
+            )
             return
 
-        text = content.get('content', '').strip()
-        client_message_id = content.get('client_message_id', str(uuid.uuid4()))
+        text = (payload.get('content') or '').strip()
+        cmid = client_message_id or payload.get('client_message_id') or str(uuid.uuid4())
 
-        # Validate message length (Plan Section 4.5)
         if not text:
-            await self.send_json({'type': 'error', 'message': 'Empty message.'})
+            await self._error('EMPTY_MESSAGE', 'Tin nhắn rỗng.', client_message_id=cmid)
             return
         if len(text) > settings.MESSAGE_MAX_LENGTH:
             logger.warning('message.rejected.too_large', length=len(text))
-            await self.send_json({
-                'type': 'error',
-                'code': 'MESSAGE_TOO_LARGE',
-                'message': f'Message exceeds {settings.MESSAGE_MAX_LENGTH} characters.',
-            })
-            return
-
-        # Sanitize content (XSS prevention — Plan Section 6)
-        text = bleach.clean(text, tags=[], strip=True)
-
-        # Save message with ordering + idempotency (ADR-003)
-        message_data = await self._save_message(text, client_message_id)
-
-        if message_data is None:
-            await self.send_json({
-                'type': 'error',
-                'message': 'Failed to save message.',
-            })
-            return
-
-        # If duplicate (idempotency key match), reply to sender only
-        if message_data.get('is_duplicate'):
-            await self.send_json({
-                'type': 'chat.message',
-                'message': message_data,
-            })
-            return
-
-        # Broadcast to conversation group via Redis Channel Layer
-        try:
-            await self.channel_layer.group_send(
-                self.conversation.group_name,
-                {
-                    'type': 'chat.new_message',
-                    'message': message_data,
-                },
+            await self._error(
+                'MESSAGE_TOO_LARGE',
+                f'Tin nhắn vượt {settings.MESSAGE_MAX_LENGTH} ký tự.',
+                extra={'max_length': settings.MESSAGE_MAX_LENGTH},
+                client_message_id=cmid,
             )
-        except Exception as e:
-            # Graceful degradation when Redis down (Plan Section 8.2)
-            logger.error('broadcast.failed', error=str(e), conversation_id=self.conversation_id)
-            await self.send_json({
-                'type': 'error',
-                'code': 'BROADCAST_FAILED',
-                'message': 'Message saved but broadcast failed. Other users may not see it immediately.',
-            })
             return
 
-        # Send notification to offline members
-        await self._notify_offline_members(message_data)
-
-    async def chat_new_message(self, event):
-        """Handle incoming broadcast message from group_send."""
-        await self.send_json({
-            'type': 'chat.message',
-            'message': event['message'],
-        })
-
-    # -----------------------------------------------------------------------
-    # Typing Indicator
-    # -----------------------------------------------------------------------
-
-    async def _handle_typing(self, content):
-        is_typing = content.get('is_typing', False)
         try:
-            await self.channel_layer.group_send(
-                self.conversation.group_name,
-                {
-                    'type': 'chat.typing_indicator',
-                    'user_id': self.user.pk,
-                    'username': self.user.username,
-                    'is_typing': is_typing,
-                },
+            message, created = await self._create_message(
+                conversation_id, text, cmid, payload.get('reply_to_id'),
             )
-        except Exception:
-            pass  # Non-critical, don't error on typing broadcast failure
+        except Exception as exc:
+            logger.error('message.save_error', error=str(exc))
+            await self._error('SAVE_FAILED', 'Không lưu được tin nhắn.', client_message_id=cmid)
+            return
 
-    async def chat_typing_indicator(self, event):
-        # Don't send typing indicator back to the typer
-        if event['user_id'] != self.user.pk:
-            await self.send_json({
-                'type': 'chat.typing',
-                'user_id': event['user_id'],
-                'username': event['username'],
-                'is_typing': event['is_typing'],
-            })
+        # Ack luôn gửi cho người gửi, kể cả khi trùng client_message_id.
+        await self.send_json(envelope('message.ack', {
+            'conversation_id': message['conversation_id'],
+            'message_id': message['id'],
+            'sequence_number': message['sequence_number'],
+            'server_time': message['created_at'],
+            'duplicate': not created,
+        }, cmid))
 
-    # -----------------------------------------------------------------------
-    # Read Receipts
-    # -----------------------------------------------------------------------
+        if not created:
+            # Trùng idempotency key: KHÔNG cấp sequence mới, KHÔNG broadcast lại.
+            return
 
-    async def _handle_read_receipt(self, content):
-        message_id = content.get('message_id')
-        if message_id:
-            await self._save_read_receipt(message_id)
-            try:
-                await self.channel_layer.group_send(
-                    self.conversation.group_name,
-                    {
-                        'type': 'chat.read_update',
-                        'user_id': self.user.pk,
-                        'username': self.user.username,
-                        'message_id': message_id,
-                    },
-                )
-            except Exception:
-                pass
+        await safe_group_send(
+            self.conversation_group,
+            {'type': 'fanout', 'envelope': envelope('message.new', message, cmid)},
+            self.channel_layer,
+        )
+        await self._notify_other_members(message)
 
-    async def chat_read_update(self, event):
-        if event['user_id'] != self.user.pk:
-            await self.send_json({
-                'type': 'chat.read',
-                'user_id': event['user_id'],
-                'username': event['username'],
-                'message_id': event['message_id'],
-            })
+        # Xem trước liên kết chạy sau khi đã lưu + broadcast: lỗi hay timeout
+        # không bao giờ chặn luồng gửi tin (mục 7.5).
+        url = linkpreview.first_url(text)
+        if url:
+            asyncio.ensure_future(self._attach_preview(message['id'], url))
 
     # -----------------------------------------------------------------------
-    # Heartbeat / Presence
+    # message.edited / deleted / reaction / read
     # -----------------------------------------------------------------------
 
-    async def _handle_heartbeat(self, content):
-        await self._update_heartbeat()
-        await self._set_presence('online')
-        await self.send_json({'type': 'chat.pong'})
+    async def _on_message_edit(self, payload, client_message_id=None):
+        result, error = await self._edit_message(
+            payload.get('message_id'), payload.get('content', ''),
+        )
+        if error:
+            await self._error(error, 'Không sửa được tin nhắn.', client_message_id=client_message_id)
+            return
+        await safe_group_send(
+            self.conversation_group,
+            {'type': 'fanout', 'envelope': envelope('message.edited', result)},
+            self.channel_layer,
+        )
 
-    async def chat_presence_update(self, event):
-        """Broadcast presence changes to all other members."""
-        if event['user_id'] != self.user.pk:
-            await self.send_json({
-                'type': 'chat.presence',
-                'user_id': event['user_id'],
-                'username': event['username'],
-                'status': event['status'],
-            })
+    async def _on_message_delete(self, payload, client_message_id=None):
+        result, error = await self._delete_message(payload.get('message_id'))
+        if error:
+            await self._error(error, 'Không xoá được tin nhắn.', client_message_id=client_message_id)
+            return
+        await safe_group_send(
+            self.conversation_group,
+            {'type': 'fanout', 'envelope': envelope('message.deleted', result)},
+            self.channel_layer,
+        )
+
+    async def _on_message_reaction(self, payload, client_message_id=None):
+        result, error = await self._toggle_reaction(
+            payload.get('message_id'), payload.get('emoji', ''),
+        )
+        if error:
+            await self._error(error, 'Không đặt được reaction.', client_message_id=client_message_id)
+            return
+        await safe_group_send(
+            self.conversation_group,
+            {'type': 'fanout', 'envelope': envelope('message.reaction', result)},
+            self.channel_layer,
+        )
+
+    async def _on_message_read(self, payload, client_message_id=None):
+        if self.conversation_id is None:
+            return
+        sequence = payload.get('sequence_number')
+        if sequence is None:
+            return
+        applied = await self._mark_read(int(sequence))
+        if applied is None:
+            return
+
+        # Throttle broadcast 1 lần/giây/phòng (mục 4.4).
+        now = time.monotonic()
+        last = getattr(self, '_last_read_broadcast', 0.0)
+        if now - last < settings.READ_RECEIPT_THROTTLE_SECONDS:
+            return
+        self._last_read_broadcast = now
+
+        await safe_group_send(
+            self.conversation_group,
+            {'type': 'fanout', 'envelope': envelope('message.read', {
+                'conversation_id': self.conversation_id,
+                'user_id': self.user.pk,
+                'username': self.user.username,
+                'sequence_number': applied,
+            })},
+            self.channel_layer,
+        )
+
+    async def _on_message_pin(self, payload, client_message_id=None):
+        await self._set_pinned(payload.get('message_id'), True, client_message_id)
+
+    async def _on_message_unpin(self, payload, client_message_id=None):
+        await self._set_pinned(payload.get('message_id'), False, client_message_id)
+
+    async def _set_pinned(self, message_id, pinned, client_message_id):
+        result, error = await self._pin_message(message_id, pinned)
+        if error:
+            await self._error(error, 'Không ghim được tin nhắn.',
+                              client_message_id=client_message_id)
+            return
+        await safe_group_send(
+            self.conversation_group,
+            {'type': 'fanout', 'envelope': envelope(
+                'message.pinned' if pinned else 'message.unpinned', result,
+            )},
+            self.channel_layer,
+        )
+
+    async def _attach_preview(self, message_id, url):
+        try:
+            preview = await asyncio.to_thread(linkpreview.fetch, url)
+            if not preview:
+                return
+            payload = await self._save_preview(message_id, preview)
+            if not payload:
+                return
+            await safe_group_send(
+                self.conversation_group,
+                {'type': 'fanout', 'envelope': envelope('message.preview', payload)},
+                self.channel_layer,
+            )
+        except Exception as exc:
+            logger.info('link_preview.skipped', error=str(exc))
 
     # -----------------------------------------------------------------------
-    # Offline Sync (Plan Section 5.3)
+    # typing — không chạm DB
     # -----------------------------------------------------------------------
 
-    async def _handle_offline_sync(self, content):
-        last_seen = content.get('last_seen_sequence', 0)
-        messages = await self._get_missed_messages(last_seen)
-        await self.send_json({
-            'type': 'chat.sync_response',
+    async def _on_typing_start(self, payload, client_message_id=None):
+        await self._typing('typing.start')
+
+    async def _on_typing_stop(self, payload, client_message_id=None):
+        await self._typing('typing.stop')
+
+    async def _typing(self, msg_type):
+        if not self.conversation_group:
+            return
+        await safe_group_send(
+            self.conversation_group,
+            {'type': 'fanout', 'envelope': envelope(msg_type, {
+                'conversation_id': self.conversation_id,
+                'user_id': self.user.pk,
+                'username': self.user.username,
+            })},
+            self.channel_layer,
+        )
+
+    # -----------------------------------------------------------------------
+    # sync + heartbeat
+    # -----------------------------------------------------------------------
+
+    async def _on_sync_request(self, payload, client_message_id=None):
+        conversation_id = payload.get('conversation_id') or self.conversation_id
+        if conversation_id is None:
+            await self._error('BAD_PAYLOAD', 'Thiếu conversation_id.')
+            return
+        conversation_id = int(conversation_id)
+        if not await self._is_member(conversation_id):
+            await self._error('ROOM_FORBIDDEN', 'Bạn không có quyền vào phòng này.')
+            return
+
+        after = int(payload.get('after_sequence') or 0)
+        messages, has_more = await self._sync_messages(conversation_id, after)
+        await self.send_json(envelope('sync.response', {
+            'conversation_id': conversation_id,
+            'after_sequence': after,
             'messages': messages,
-            'conversation_id': self.conversation_id,
-        })
+            'has_more': has_more,
+        }, client_message_id))
+
+    async def _on_heartbeat(self, payload, client_message_id=None):
+        await presence.touch(self.user.pk, self.device_id)
+        status = await presence.get_status(self.user.pk) or presence.ONLINE
+        if status != presence.ONLINE:
+            status = presence.ONLINE  # có heartbeat mới -> về online ngay
+        await self._set_presence_db(status)
+        await self.send_json(envelope('heartbeat.pong', {
+            'server_time': time.time(),
+            'status': status,
+        }, client_message_id))
 
     # -----------------------------------------------------------------------
-    # Notification Channel
+    # Group handlers (channel layer -> socket)
     # -----------------------------------------------------------------------
 
-    async def user_notification(self, event):
-        """Handle notifications pushed to user_{id} group."""
-        await self.send_json({
-            'type': 'notification',
-            'notification': event['notification'],
-        })
+    async def fanout(self, event):
+        """Chuyển tiếp nguyên envelope tới client."""
+        await self.send_json(event['envelope'])
+
+    async def fanout_except_sender(self, event):
+        if event.get('sender_id') == self.user.pk:
+            return
+        await self.send_json(event['envelope'])
+
+    async def fanout_cross_room(self, event):
+        """
+        Bản sao gửi qua kênh riêng `user_<id>` chỉ dành cho phòng KHÔNG mở.
+        Socket đang mở đúng phòng đó đã nhận qua group phòng rồi — bỏ qua,
+        nếu không client sẽ thấy tin nhắn hai lần.
+        """
+        payload = event['envelope'].get('payload', {})
+        if payload.get('conversation_id') == self.conversation_id:
+            return
+        await self.send_json(event['envelope'])
 
     # -----------------------------------------------------------------------
-    # Rate Limiting
+    # Helpers
     # -----------------------------------------------------------------------
+
+    async def _error(self, code, message, extra=None, client_message_id=None):
+        payload = {'code': code, 'message': message}
+        if extra:
+            payload.update(extra)
+        await self.send_json(envelope('error', payload, client_message_id))
 
     def _check_rate_limit(self):
+        """Trả (allowed, retry_after_seconds)."""
         now = time.time()
-        window = 1.0  # 1 second window
+        window = 1.0
         self._message_timestamps = [
             t for t in self._message_timestamps if now - t < window
         ]
         if len(self._message_timestamps) >= settings.MESSAGE_RATE_LIMIT:
-            return False
+            oldest = min(self._message_timestamps)
+            return False, max(1, int(round(window - (now - oldest))) or 1)
         self._message_timestamps.append(now)
-        return True
+        return True, 0
 
-    # -----------------------------------------------------------------------
-    # Database Operations (sync → async wrappers)
-    # -----------------------------------------------------------------------
-
-    @database_sync_to_async
-    def _check_membership(self):
-        return ConversationMember.objects.filter(
-            conversation_id=self.conversation_id,
-            user=self.user,
-        ).exists()
-
-    @database_sync_to_async
-    def _get_conversation(self):
-        return Conversation.objects.get(pk=self.conversation_id)
-
-    @database_sync_to_async
-    def _save_message(self, content, client_message_id):
-        """
-        Save message with DB-assigned sequence_number (ADR-003).
-        Uses SELECT FOR UPDATE to serialize sequence assignment.
-        Idempotency: if client_message_id already exists, return existing message.
-        """
-        try:
-            # Check idempotency first
-            existing = Message.objects.filter(
-                conversation_id=self.conversation_id,
-                sender=self.user,
-                client_message_id=client_message_id,
-            ).first()
-            if existing:
-                logger.info(
-                    'message.duplicate_ignored',
-                    client_message_id=str(client_message_id),
-                    existing_sequence=existing.sequence_number,
-                )
-                return {
-                    'id': existing.pk,
-                    'conversation_id': self.conversation_id,
-                    'sender_id': self.user.pk,
-                    'sender_username': self.user.username,
-                    'sequence_number': existing.sequence_number,
-                    'client_message_id': str(existing.client_message_id),
-                    'content': existing.content,
-                    'created_at': existing.created_at.isoformat(),
-                    'is_duplicate': True,
-                }
-
-            with transaction.atomic():
-                # Lock conversation row to assign sequence_number
-                conv = Conversation.objects.select_for_update().get(
-                    pk=self.conversation_id,
-                )
-                conv.last_sequence += 1
-                conv.save(update_fields=['last_sequence', 'updated_at'])
-
-                message = Message.objects.create(
-                    conversation=conv,
-                    sender=self.user,
-                    sequence_number=conv.last_sequence,
-                    client_message_id=client_message_id,
-                    content=content,
-                )
-
-            return {
-                'id': message.pk,
-                'conversation_id': self.conversation_id,
-                'sender_id': self.user.pk,
-                'sender_username': self.user.username,
-                'sequence_number': message.sequence_number,
-                'client_message_id': str(message.client_message_id),
-                'content': message.content,
-                'created_at': message.created_at.isoformat(),
-                'is_duplicate': False,
-            }
-        except IntegrityError:
-            logger.error('message.save_failed', conversation_id=self.conversation_id)
-            return None
-        except Exception as e:
-            logger.error('message.save_error', error=str(e))
-            return None
-
-    @database_sync_to_async
-    def _save_read_receipt(self, message_id):
-        from .models import MessageReadReceipt
-        try:
-            MessageReadReceipt.objects.get_or_create(
-                message_id=message_id, user=self.user,
-            )
-        except Exception:
-            pass
-
-    @database_sync_to_async
-    def _create_connection(self):
-        UserConnection.objects.update_or_create(
-            channel_name=self.channel_name,
-            defaults={
-                'user': self.user,
-                'device_id': self.scope.get('query_string', b'').decode()[:255],
-            },
-        )
-
-    @database_sync_to_async
-    def _delete_connection(self):
-        UserConnection.objects.filter(channel_name=self.channel_name).delete()
-
-    @database_sync_to_async
-    def _user_has_connections(self):
-        return UserConnection.objects.filter(user=self.user).exists()
-
-    @database_sync_to_async
-    def _update_heartbeat(self):
-        UserConnection.objects.filter(
-            channel_name=self.channel_name,
-        ).update(last_heartbeat=timezone.now())
-
-    @database_sync_to_async
-    def _set_presence(self, status_value):
-        PresenceStatus.objects.update_or_create(
-            user=self.user,
-            defaults={'status': status_value},
-        )
-
-    @database_sync_to_async
-    def _get_missed_messages(self, last_seen_sequence):
-        messages = Message.objects.filter(
-            conversation_id=self.conversation_id,
-            sequence_number__gt=last_seen_sequence,
-        ).select_related('sender').order_by('sequence_number')[:200]
-        return [
-            {
-                'id': m.pk,
-                'conversation_id': m.conversation_id,
-                'sender_id': m.sender_id,
-                'sender_username': m.sender.username,
-                'sequence_number': m.sequence_number,
-                'client_message_id': str(m.client_message_id),
-                'content': m.content,
-                'created_at': m.created_at.isoformat(),
-            }
-            for m in messages
-        ]
-
-    @database_sync_to_async
-    def _get_offline_member_ids(self):
-        """Get member IDs who are not currently viewing this conversation."""
-        return list(
-            ConversationMember.objects.filter(
-                conversation_id=self.conversation_id,
-            ).exclude(user=self.user).values_list('user_id', flat=True)
-        )
-
-    async def _broadcast_presence(self, status_value):
-        try:
-            await self.channel_layer.group_send(
-                self.conversation.group_name,
-                {
-                    'type': 'chat.presence_update',
-                    'user_id': self.user.pk,
-                    'username': self.user.username,
-                    'status': status_value,
-                },
-            )
-        except Exception as e:
-            logger.error('presence.broadcast_failed', error=str(e))
-
-    async def _notify_offline_members(self, message_data):
-        """Send notification to members not in the conversation (Plan Section 2.1)."""
-        try:
-            member_ids = await self._get_offline_member_ids()
-            for uid in member_ids:
-                notification_data = await self._create_notification(uid, message_data)
-                await self.channel_layer.group_send(
-                    f'user_{uid}',
-                    {
-                        'type': 'user.notification',
-                        'notification': notification_data,
-                    },
-                )
-        except Exception as e:
-            logger.error('notification.failed', error=str(e))
-
-    @database_sync_to_async
-    def _create_notification(self, user_id, message_data):
-        n = Notification.objects.create(
-            user_id=user_id,
-            type='new_message',
-            title=f"New message from {message_data['sender_username']}",
-            body=message_data['content'][:100],
-            data={
-                'conversation_id': self.conversation_id,
-                'message_id': message_data['id'],
-            },
-        )
-        return {
-            'id': n.pk,
-            'type': n.type,
-            'title': n.title,
-            'body': n.body,
-            'data': n.data,
-            'created_at': n.created_at.isoformat(),
+    async def _broadcast_presence(self, status):
+        payload = {
+            'user_id': self.user.pk,
+            'username': self.user.username,
+            'status': status,
         }
+        for conversation_id in await self._user_conversation_ids():
+            await safe_group_send(
+                Conversation.group_name_for(conversation_id),
+                {
+                    'type': 'fanout_except_sender',
+                    'sender_id': self.user.pk,
+                    'envelope': envelope('presence.update', payload),
+                },
+                self.channel_layer,
+            )
+
+    async def _notify_other_members(self, message):
+        """Đẩy message.new lên kênh riêng của member đang không mở phòng này."""
+        member_ids = await self._other_member_ids(message['conversation_id'])
+        for uid in member_ids:
+            await safe_group_send(
+                user_group(uid),
+                {
+                    'type': 'fanout_cross_room',
+                    'envelope': envelope('message.new', {**message, 'cross_room': True}),
+                },
+                self.channel_layer,
+            )
+
+    # -----------------------------------------------------------------------
+    # DB (mục 5.4 — mọi ORM đều bọc database_sync_to_async)
+    # -----------------------------------------------------------------------
+
+    @database_sync_to_async
+    def _is_member(self, conversation_id):
+        return services.is_member(conversation_id, self.user.pk)
+
+    @database_sync_to_async
+    def _member_list(self, conversation_id):
+        return services.member_payloads(conversation_id)
+
+    @database_sync_to_async
+    def _create_message(self, conversation_id, content, client_message_id, reply_to_id):
+        return services.create_message(
+            conversation_id, self.user, content, client_message_id, reply_to_id,
+        )
+
+    @database_sync_to_async
+    def _edit_message(self, message_id, content):
+        return services.edit_message(message_id, self.user, content)
+
+    @database_sync_to_async
+    def _delete_message(self, message_id):
+        return services.delete_message(message_id, self.user)
+
+    @database_sync_to_async
+    def _toggle_reaction(self, message_id, emoji):
+        return services.toggle_reaction(message_id, self.user, emoji)
+
+    @database_sync_to_async
+    def _pin_message(self, message_id, pinned):
+        return services.set_pinned(message_id, self.user, pinned)
+
+    @database_sync_to_async
+    def _save_preview(self, message_id, preview):
+        return services.save_preview(message_id, preview)
+
+    @database_sync_to_async
+    def _mark_read(self, sequence_number):
+        return services.mark_read(self.conversation_id, self.user, sequence_number)
+
+    @database_sync_to_async
+    def _sync_messages(self, conversation_id, after_sequence):
+        return services.sync_messages(conversation_id, after_sequence)
+
+    @database_sync_to_async
+    def _set_presence_db(self, status):
+        PresenceStatus.objects.update_or_create(
+            user=self.user, defaults={'status': status},
+        )
+
+    @database_sync_to_async
+    def _user_conversation_ids(self):
+        return list(
+            self.user.memberships.values_list('conversation_id', flat=True)
+        )
+
+    @database_sync_to_async
+    def _other_member_ids(self, conversation_id):
+        from .models import ConversationMember
+        return list(
+            ConversationMember.objects
+            .filter(conversation_id=conversation_id)
+            .exclude(user=self.user)
+            .values_list('user_id', flat=True)
+        )
 
 
 class NotificationConsumer(AsyncJsonWebsocketConsumer):
     """
-    Dedicated notification consumer — receives real-time notifications
-    on user_{id} group even when not viewing any specific conversation.
-    Plan Section 2.1: "nhận thông báo real-time kể cả khi không mở đúng conversation".
+    Kênh thông báo thuần tuý trên `user_<id>` — dành cho client chỉ cần nhận
+    thông báo mà không mở phòng nào. Client chính dùng ChatConsumer (đã gồm
+    kênh này) nên không mở cả hai để tránh nhận trùng.
     """
 
     async def connect(self):
         self.user = self.scope.get('user')
         if not self.user or not self.user.is_authenticated:
-            await self.close(code=4001)
+            await self.close(code=CLOSE_UNAUTHENTICATED)
             return
-
-        await self.channel_layer.group_add(
-            f'user_{self.user.pk}', self.channel_name,
+        subprotocol = (
+            WS_SUBPROTOCOL
+            if WS_SUBPROTOCOL in (self.scope.get('subprotocols') or [])
+            else None
         )
-        await self.accept()
-        await self.send_json({
-            'type': 'connection.established',
-            'channel': 'notifications',
-        })
+        await self.channel_layer.group_add(user_group(self.user.pk), self.channel_name)
+        await self.accept(subprotocol)
 
     async def disconnect(self, close_code):
-        if self.user and self.user.is_authenticated:
+        if getattr(self, 'user', None) and self.user.is_authenticated:
             await self.channel_layer.group_discard(
-                f'user_{self.user.pk}', self.channel_name,
+                user_group(self.user.pk), self.channel_name,
             )
 
-    async def user_notification(self, event):
-        await self.send_json({
-            'type': 'notification',
-            'notification': event['notification'],
-        })
+    async def fanout(self, event):
+        await self.send_json(event['envelope'])
+
+    async def fanout_except_sender(self, event):
+        if event.get('sender_id') == getattr(self.user, 'pk', None):
+            return
+        await self.send_json(event['envelope'])
+
+    async def fanout_cross_room(self, event):
+        # Consumer này không mở phòng nào -> luôn chuyển tiếp.
+        await self.send_json(event['envelope'])

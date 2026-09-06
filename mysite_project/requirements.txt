@@ -3,6 +3,13 @@ Django==6.1
 channels==4.3.2
 daphne==4.2.3
 channels_redis==4.3.0
+redis==5.2.1
+
+# Ảnh nền người dùng tải lên
+Pillow==11.3.0
+
+# Static files
+whitenoise==6.11.0
 
 # Database
 psycopg2-binary==2.9.12

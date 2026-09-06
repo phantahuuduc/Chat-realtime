@@ -69,3 +69,19 @@ with transaction.atomic():
 
 ### Risks
 - Lock contention cao khi nhiều user gửi cùng lúc vào 1 conversation → mitigation: lock chỉ trên row, rất ngắn (microseconds)
+
+---
+
+## Cập nhật (bản thực thi hiện tại)
+
+`SELECT FOR UPDATE` + `UPDATE` đã được thay bằng MỘT câu lệnh atomic, đặt ở cuối
+transaction sau mọi validation (`chat/services.py::_next_sequence`):
+
+```sql
+UPDATE chat_conversation SET last_sequence = last_sequence + 1, updated_at = %s
+WHERE id = %s RETURNING last_sequence
+```
+
+Idempotency được kiểm TRƯỚC khi cấp sequence: trùng `client_message_id` thì trả
+bản ghi cũ, không cấp sequence mới, không broadcast lại. Kiểm chứng bằng
+`SequenceConcurrencyTest` (`TransactionTestCase`, 20 thread song song).

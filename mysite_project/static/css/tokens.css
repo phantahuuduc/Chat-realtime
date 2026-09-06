@@ -1,0 +1,82 @@
+/* =====================================================================
+   tokens.css — CHỈ chứa biến CSS. Không có selector nào khác ngoài :root.
+   ===================================================================== */
+
+:root {
+  /* nền — xanh đêm ngả tím, không phải xám trung tính */
+  --bg-0: #05060f;
+  --bg-1: #0b0e20;
+  --bg-2: #151a34;
+  --bg-glass: rgba(21, 26, 52, .58);
+
+  --line: rgba(255, 255, 255, .06);
+  --line-strong: rgba(255, 255, 255, .13);
+
+  --fg-0: #f2f4f9;
+  --fg-1: #98a2b8;
+  --fg-2: #5b6579;
+
+  /* vàng có dải, không chỉ một tông */
+  --accent: #c9a227;
+  --accent-bright: #f7e089;
+  --accent-hot: #ff9d3d;
+  --accent-deep: #8a6d12;
+  --accent-dim: rgba(201, 162, 39, .14);
+
+  /* điểm nhấn phụ — dùng rất tiết chế */
+  --crimson: #b32340;
+  --ok: #3fb27f;
+  --danger: #c1354a;
+
+  /* dải chuyển sắc dùng cho viền/gạch chân nhấn */
+  --sweep-gold: linear-gradient(90deg,
+    transparent 0%, var(--accent) 22%, var(--accent-bright) 50%,
+    var(--accent) 78%, transparent 100%);
+
+  /* bầu trời đêm châu Âu ở đỉnh khung */
+  --sky-deep: rgba(8, 14, 44, .9);
+  --sky-mid: rgba(9, 16, 46, .38);
+
+  /* hai nguồn sáng của lớp scrim: ấm ở góc phải trên, lạnh ở đáy trái */
+  --scrim-warm: rgba(255, 157, 61, .10);
+  --scrim-cool: rgba(109, 91, 208, .14);
+
+  /* ánh sáng */
+  --glow-warm: 0 0 42px rgba(201, 162, 39, .20);
+  --glow-hot: 0 0 26px rgba(255, 157, 61, .22);
+  --glow-cool: 0 0 32px rgba(120, 160, 255, .10);
+  --shadow-lift: 0 10px 34px rgba(0, 0, 0, .5);
+
+  /* nhịp chuyển động */
+  --ease-out: cubic-bezier(.22, .61, .36, 1);
+  --ease-soft: cubic-bezier(.45, .05, .35, 1);
+  --t-fast: 140ms;
+  --t-base: 240ms;
+  --t-slow: 480ms;
+
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-ui: "Inter", -apple-system, "Segoe UI", sans-serif;
+
+  --r-sm: 6px; --r-md: 10px; --r-lg: 16px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 40px;
+
+  /* type scale — 5 bậc, không dùng giá trị ngoài scale */
+  --fs-xs: 11px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 20px;
+  --fs-xl: 32px;
+  --fs-message: var(--fs-md);
+
+  /* khung layout */
+  --sidebar-w: 288px;
+  --panel-w: 280px;
+  --header-h: 72px;
+
+  /* nền động — atmosphere.js chỉ ghi đè --atmos-image khi đổi preset */
+  --atmos-image: none;
+  --atmos-tint: transparent;
+  --atmos-image-opacity: 1;
+  --sidebar-blur: 20px;
+}

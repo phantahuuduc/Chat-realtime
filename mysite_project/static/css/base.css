@@ -1,0 +1,275 @@
+/* =====================================================================
+   base.css — reset, typography, khung layout, nguyên tố dùng lại
+   ===================================================================== */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html,
+body { height: 100%; }
+
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--fg-0);
+  background: var(--bg-0);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea { font: inherit; color: inherit; }
+
+button {
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+a { color: var(--accent); }
+
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--r-sm);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--fg-2); }
+
+/* ---------------------------------------------------------------------
+   Icon
+   --------------------------------------------------------------------- */
+
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon--sm { width: 15px; height: 15px; }
+.icon--lg { width: 22px; height: 22px; }
+
+/* ---------------------------------------------------------------------
+   Nút
+   --------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  color: var(--fg-0);
+  font-size: var(--fs-sm);
+  transition:
+    border-color var(--t-fast) var(--ease-out),
+    color var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.btn:hover { border-color: var(--fg-2); }
+.btn:active { transform: scale(.96); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn--primary { border-color: var(--accent); color: var(--accent); }
+.btn--primary:hover { background: var(--accent-dim); }
+.btn--primary:active { border-color: var(--accent-deep); }
+
+.btn--danger { border-color: var(--crimson); color: var(--crimson); }
+.btn--danger:hover { background: rgba(164, 31, 53, .14); }
+
+.btn-text {
+  color: var(--fg-1);
+  font-size: var(--fs-sm);
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid transparent;
+  transition: color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+}
+
+.btn-text:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  color: var(--fg-1);
+  transition:
+    color var(--t-fast) var(--ease-out),
+    border-color var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.btn-icon:hover { color: var(--fg-0); border-color: var(--line-strong); }
+.btn-icon:active { transform: scale(.94); }
+.btn-icon--on { color: var(--accent); border-color: var(--accent); }
+
+/* ---------------------------------------------------------------------
+   Trường nhập
+   --------------------------------------------------------------------- */
+
+.field { display: block; margin-bottom: var(--sp-4); }
+
+.field__label {
+  display: block;
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--fg-1);
+}
+
+.field__input {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
+  outline: none;
+  transition: border-color var(--t-fast) var(--ease-out);
+}
+
+.field__input:focus { border-color: var(--accent); }
+.field__input::placeholder { color: var(--fg-2); }
+.field__hint { font-size: var(--fs-xs); color: var(--fg-2); }
+
+.field__code {
+  text-transform: uppercase;
+  letter-spacing: .2em;
+}
+
+/* ---------------------------------------------------------------------
+   Nguyên tố nhỏ
+   --------------------------------------------------------------------- */
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  color: var(--fg-1);
+  font-size: var(--fs-sm);
+}
+
+.avatar--sm { width: 28px; height: 28px; font-size: var(--fs-xs); }
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--fg-1);
+  font-size: var(--fs-xs);
+}
+
+.presence-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--fg-2);
+}
+
+.presence-dot[data-state="online"] { background: var(--ok); }
+.presence-dot[data-state="away"] { background: var(--accent); }
+.presence-dot[data-state="offline"] { background: var(--fg-2); }
+
+.switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  font-size: var(--fs-sm);
+  color: var(--fg-1);
+  cursor: pointer;
+}
+
+.switch input { accent-color: var(--accent); }
+
+.radio-row { display: flex; gap: var(--sp-2); }
+
+.radio-row__item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+
+.radio-row__item:has(input:checked) { border-color: var(--accent); color: var(--accent); }
+.radio-row__item input { accent-color: var(--accent); }
+
+/* ---------------------------------------------------------------------
+   Khung layout
+   --------------------------------------------------------------------- */
+
+/* Khung bọc toàn bộ giao diện. BẮT BUỘC có position, nếu không z-index
+   vô hiệu và các tầng .atmos__* sẽ vẽ đè lên.
+
+   Hiển thị điều khiển bằng thuộc tính [hidden], KHÔNG bằng class do JS gắn:
+   một bản app.js cũ còn trong cache sẽ không gắn đúng class mới và trang
+   thành trắng trơn. Với [hidden], JS hỏng thì cùng lắm hiện màn đăng nhập
+   (z-index 200) đè lên, không bao giờ mất sạch giao diện. */
+.app-shell {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  height: 100%;
+  min-height: 100vh;
+}
+
+.stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  :root { --sidebar-w: 232px; }
+}
