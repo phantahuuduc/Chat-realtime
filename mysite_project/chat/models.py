@@ -42,6 +42,10 @@ class Conversation(models.Model):
         max_length=10, choices=VISIBILITY_CHOICES, default=VISIBILITY_PRIVATE,
     )
     description = models.CharField(max_length=255, blank=True, default='')
+    is_ai = models.BooleanField(
+        default=False,
+        help_text='Phòng trò chuyện riêng với trợ lý AI, mỗi user một phòng.',
+    )
     join_code = models.CharField(
         max_length=6, unique=True, null=True, blank=True,
         help_text='Mã tham gia 6 ký tự alphanumeric viết hoa.',

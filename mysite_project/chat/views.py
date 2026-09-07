@@ -6,6 +6,7 @@ Phân quyền theo membership. Mọi broadcast sau khi ghi DB đều đi qua
 """
 
 import structlog
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
@@ -61,12 +62,19 @@ class ConversationListCreateView(generics.ListCreateAPIView):
     serializer_class = ConversationSerializer
 
     def get_queryset(self):
-        return (
+        # Trợ lý AI là tính năng cộng thêm: tạo phòng nếu đang bật, và ẩn
+        # hẳn phòng đó khi tắt để danh sách giống hệt lúc chưa có tính năng.
+        services.ensure_ai_conversation(self.request.user)
+
+        queryset = (
             Conversation.objects
             .filter(members__user=self.request.user)
             .prefetch_related('members__user')
             .distinct()
         )
+        if not settings.AI_ASSISTANT_ENABLED:
+            queryset = queryset.exclude(is_ai=True)
+        return queryset.order_by('-is_ai', '-updated_at')
 
     def create(self, request, *args, **kwargs):
         s = ConversationCreateSerializer(data=request.data)

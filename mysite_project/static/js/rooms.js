@@ -44,8 +44,10 @@ App.rooms = (function () {
   }
 
   function render() {
-    const rows = state.rooms.filter((r) =>
-      !state.filter || (r.name || '').toLowerCase().includes(state.filter));
+    // Trợ lý AI luôn ghim đầu danh sách, không phụ thuộc thời gian tin cuối.
+    const rows = state.rooms
+      .filter((r) => !state.filter || (r.name || '').toLowerCase().includes(state.filter))
+      .sort((a, b) => Number(Boolean(b.is_ai)) - Number(Boolean(a.is_ai)));
 
     if (!rows.length) {
       dom.roomList.innerHTML = `<div class="sidebar__empty">${
@@ -55,9 +57,14 @@ App.rooms = (function () {
     }
 
     dom.roomList.innerHTML = rows.map((room) => `
-      <button type="button" class="room-row${room.id === state.activeId ? ' room-row--active' : ''}"
+      <button type="button" class="room-row${room.id === state.activeId ? ' room-row--active' : ''}${
+        room.is_ai ? ' room-row--ai' : ''}"
               data-room="${room.id}">
-        <span class="avatar">${util.esc(util.initial(room.name || 'R'))}</span>
+        <span class="avatar">${
+          room.is_ai
+            ? '<svg class="icon"><use href="#icon-ball"></use></svg>'
+            : util.esc(util.initial(room.name || 'R'))
+        }</span>
         <span class="room-row__body">
           <span class="room-row__head">
             <span class="room-row__name">${util.esc(room.name || `Room #${room.id}`)}</span>
@@ -100,8 +107,12 @@ App.rooms = (function () {
     dom.composer.hidden = false;
     renderHeader();
 
+    const ai = Boolean(state.active && state.active.is_ai);
+    dom.btnMemberPanel.hidden = ai;
+    dom.btnLeaveRoom.hidden = ai;
+
     await App.chat.openRoom(roomId);
-    loadMembers(roomId);
+    if (!ai) loadMembers(roomId);
   }
 
   function closeRoom() {
@@ -117,12 +128,27 @@ App.rooms = (function () {
     render();
   }
 
+  function setMemberCount() {
+    dom.roomMemberCount.textContent = state.active && state.active.is_ai
+      ? 'Chỉ mình bạn thấy'
+      : `${state.members.length} thành viên`;
+  }
+
   function renderHeader() {
     const room = state.active;
     if (!room) return;
     const name = room.name || `Room #${room.id}`;
     dom.roomName.textContent = name;
     dom.roomName.dataset.text = name;
+
+    if (room.is_ai) {
+      dom.roomAvatar.innerHTML = '<svg class="icon"><use href="#icon-ball"></use></svg>';
+      dom.roomVisibility.textContent = 'Trợ lý AI';
+      dom.roomCode.hidden = true;
+      dom.roomMemberCount.textContent = 'Chỉ mình bạn thấy';
+      return;
+    }
+
     dom.roomAvatar.textContent = util.initial(name);
     dom.roomVisibility.textContent = room.visibility === 'public' ? 'Công khai' : 'Riêng tư';
     dom.roomCode.textContent = room.join_code ? `Mã ${room.join_code}` : '';
@@ -304,7 +330,7 @@ App.rooms = (function () {
     const data = await resp.json();
     state.members = data.members || [];
     state.myRole = data.my_role;
-    dom.roomMemberCount.textContent = `${state.members.length} thành viên`;
+    setMemberCount();
     if (state.panel === 'members') renderMembers();
   }
 
@@ -387,7 +413,7 @@ App.rooms = (function () {
         state.members = p.members.map((m) => ({ ...m, status: m.status || 'offline' }));
         const me = state.members.find((m) => m.user_id === appState.user.id);
         state.myRole = me ? me.role : null;
-        dom.roomMemberCount.textContent = `${state.members.length} thành viên`;
+        setMemberCount();
         if (state.panel === 'members') renderMembers();
         return;
       }
@@ -482,5 +508,7 @@ App.rooms = (function () {
     clearUnread,
     members: () => state.members,
     myRole: () => state.myRole,
+    activeIsAi: () => Boolean(state.active && state.active.is_ai),
+    aiName: () => (state.active && state.active.is_ai ? state.active.name : ''),
   };
 }());

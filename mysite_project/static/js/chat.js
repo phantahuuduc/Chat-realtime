@@ -45,6 +45,16 @@ App.chat = (function () {
   ];
 
   const SHRUG = '¯\\_(ツ)_/¯';
+
+  // Thẻ gợi ý hiện ở màn hình khởi đầu của phòng trợ lý AI.
+  const AI_SUGGESTIONS = [
+    { label: 'Giải thích khái niệm', text: 'Giải thích WebSocket cho người mới, ngắn gọn.' },
+    { label: 'Tóm tắt giúp mình', text: 'Tóm tắt đoạn sau thành 3 gạch đầu dòng:\n' },
+    { label: 'Dịch sang tiếng Anh', text: 'Dịch đoạn này sang tiếng Anh:\n' },
+    { label: 'Sửa chính tả, ngữ pháp', text: 'Sửa lỗi chính tả và ngữ pháp cho đoạn sau:\n' },
+    { label: 'Gợi ý ý tưởng', text: 'Gợi ý 5 ý tưởng tên phòng chat theo chủ đề bóng đá.' },
+    { label: 'Viết code đơn giản', text: 'Viết hàm Python đảo ngược một chuỗi, kèm ví dụ.' },
+  ];
   const URL_RE = /https?:\/\/[^\s<]+/i;
 
   /**
@@ -210,9 +220,13 @@ App.chat = (function () {
     if (isAction) classes.push('msg--action');
     if (!m.is_deleted && !mine && mentionsMe(m.content)) classes.push('msg--mentioned');
 
+    const author = !mine && App.rooms.activeIsAi()
+      ? App.rooms.aiName()
+      : m.sender_username;
+
     const head = grouped ? '' : `
       <div class="msg__head">
-        <span class="msg__author">${util.esc(m.sender_username)}</span>
+        <span class="msg__author">${util.esc(author)}</span>
         <span class="msg__time">${util.esc(util.timeLabel(m.created_at))}</span>
         ${m.sequence_number != null ? `<span class="msg__seq">#${m.sequence_number}</span>` : ''}
         ${m.is_pinned ? `<span class="msg__pin-flag">${util.icon('pin')}</span>` : ''}
@@ -239,14 +253,15 @@ App.chat = (function () {
             ? `<button class="msg__retry" data-retry="${util.esc(m.client_message_id)}">Gửi lại</button>` : ''
         }</div>${renderPreview(m.preview)}`;
 
-    const body = `<div class="msg__bubble">${quote}${inner}</div>`;
+    const caret = m._streaming ? '<span class="msg__caret" aria-hidden="true"></span>' : '';
+    const body = `<div class="msg__bubble">${quote}${inner}${caret}</div>`;
 
     return `
       <div class="${classes.join(' ')}" data-message-id="${util.esc(m.id)}"
            data-key="${util.esc(key)}"
            data-sequence="${m.sequence_number == null ? '' : m.sequence_number}">
         <div class="msg__gutter">${
-          grouped ? '' : `<span class="avatar avatar--sm">${util.esc(util.initial(m.sender_username))}</span>`
+          grouped ? '' : `<span class="avatar avatar--sm">${util.esc(util.initial(author))}</span>`
         }</div>
         <div class="msg__body">${head}${body}${renderReactions(m)}</div>
         ${renderActions(m)}
@@ -272,11 +287,29 @@ App.chat = (function () {
       previous = m;
     });
 
-    dom.messageList.innerHTML = html.join('') ||
-      '<div class="side-panel__empty">Chưa có tin nhắn nào trong phòng này.</div>';
+    dom.messageList.innerHTML = html.join('') || (App.rooms.activeIsAi()
+      ? renderAiWelcome()
+      : '<div class="side-panel__empty">Chưa có tin nhắn nào trong phòng này.</div>');
 
     observeMessages();
     renderPinBar();
+  }
+
+  function renderAiWelcome() {
+    return `
+      <div class="ai-welcome">
+        <svg class="icon ai-welcome__mark"><use href="#icon-ball"></use></svg>
+        <div class="ai-welcome__title display-text">Chào bạn, mình là CR7 AI</div>
+        <div class="ai-welcome__sub">
+          Hỏi mình bất cứ điều gì — giải thích, tóm tắt, dịch, sửa văn, hay viết code.
+        </div>
+        <div class="ai-welcome__cards">
+          ${AI_SUGGESTIONS.map((item, i) => `
+            <button type="button" class="ai-card" data-suggest="${i}">
+              <span>${util.esc(item.label)}</span>
+            </button>`).join('')}
+        </div>
+      </div>`;
   }
 
   function renderPinBar() {
@@ -538,6 +571,58 @@ App.chat = (function () {
     // has_more = còn message MỚI hơn ngoài trang này -> xin tiếp trang sau.
     if (payload.has_more) requestSync(roomId);
     if (roomId === state.roomId) render();
+  }
+
+  /**
+   * Trợ lý AI trả lời theo dòng. Ba loại sự kiện dùng chung type
+   * `message.stream`: mở đầu (kèm nguyên message rỗng), từng mẩu chữ, và
+   * kết thúc (kèm nội dung đầy đủ).
+   */
+  function onMessageStream(payload) {
+    const roomId = payload.conversation_id
+      || (payload.message && payload.message.conversation_id);
+    if (roomId == null) return;
+
+    const list = listOf(roomId);
+
+    // Mở đầu: dựng bong bóng rỗng để người dùng thấy trợ lý đang gõ.
+    if (payload.message) {
+      state.seenAt.set(messageKey(payload.message), Date.now());
+      if (!list.some((m) => m.id === payload.message.id)) {
+        list.push({ ...payload.message, content: '', _state: 'delivered', _streaming: true });
+        sortMessages(list);
+      }
+      state.lastApplied[roomId] = Math.max(
+        state.lastApplied[roomId] || 0, payload.message.sequence_number,
+      );
+      if (roomId === state.roomId) { render(); scrollToBottom(); }
+      return;
+    }
+
+    const message = list.find((m) => m.id === payload.message_id);
+    if (!message) return;
+
+    if (payload.done) {
+      message.content = payload.content || message.content;
+      message._streaming = false;
+      if (roomId === state.roomId) render();
+      return;
+    }
+
+    message.content += payload.chunk || '';
+    if (roomId !== state.roomId) return;
+
+    // Vẽ thẳng vào DOM thay vì render() cả danh sách sau mỗi mẩu chữ.
+    const node = dom.messageList.querySelector(
+      `[data-message-id="${payload.message_id}"] .msg__text`,
+    );
+    if (node) {
+      const atBottom = isNearBottom();
+      node.textContent = message.content;
+      if (atBottom) scrollToBottom();
+    } else {
+      render();
+    }
   }
 
   function patchMessage(payload, mutate) {
@@ -1026,6 +1111,17 @@ App.chat = (function () {
   // -------------------------------------------------------------------
 
   function onListClick(e) {
+    const suggest = e.target.closest('[data-suggest]');
+    if (suggest) {
+      const item = AI_SUGGESTIONS[Number(suggest.dataset.suggest)];
+      dom.msgInput.value = item.text;
+      autoResize();
+      updateCounter();
+      // Gợi ý kết thúc bằng xuống dòng nghĩa là chờ người dùng dán nội dung vào.
+      if (item.text.endsWith('\n')) dom.msgInput.focus(); else send();
+      return;
+    }
+
     const retryBtn = e.target.closest('[data-retry]');
     if (retryBtn) { retry(retryBtn.dataset.retry); return; }
 
@@ -1137,6 +1233,7 @@ App.chat = (function () {
     App.ws.on('message.new', onMessageNew);
     App.ws.on('message.ack', onMessageAck);
     App.ws.on('sync.response', onSyncResponse);
+    App.ws.on('message.stream', onMessageStream);
 
     App.ws.on('message.edited', (p) => patchMessage(p, (m) => Object.assign(m, p)));
     App.ws.on('message.deleted', (p) => patchMessage(p, (m) => {

@@ -10,6 +10,7 @@ Hai điểm cốt lõi:
 import bleach
 import structlog
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
@@ -82,6 +83,7 @@ def serialize_conversation(conv, user=None):
         'type': conv.type,
         'visibility': conv.visibility,
         'description': conv.description,
+        'is_ai': conv.is_ai,
         'join_code': conv.join_code,
         'last_sequence': conv.last_sequence,
         'member_count': conv.members.count(),
@@ -446,3 +448,126 @@ def member_payloads(conversation_id):
         }
         for m in members
     ]
+
+
+# ---------------------------------------------------------------------------
+# Trợ lý AI — tính năng cộng thêm
+# ---------------------------------------------------------------------------
+
+def get_ai_bot():
+    """
+    User đại diện cho trợ lý. Đặt mật khẩu không dùng được và is_active=False
+    nên không ai đăng nhập được bằng tài khoản này.
+    """
+    User = get_user_model()
+    bot, created = User.objects.get_or_create(
+        username=settings.AI_BOT_USERNAME,
+        defaults={'first_name': settings.AI_BOT_DISPLAY_NAME, 'is_active': False},
+    )
+    if created:
+        bot.set_unusable_password()
+        bot.save(update_fields=['password'])
+    return bot
+
+
+def ensure_ai_conversation(user):
+    """
+    Đảm bảo user có đúng một phòng AI. Trả về Conversation, hoặc None khi
+    tính năng tắt hoặc có sự cố — người gọi chỉ việc bỏ qua giá trị None.
+    """
+    if not settings.AI_ASSISTANT_ENABLED:
+        return None
+
+    existing = Conversation.objects.filter(
+        is_ai=True, members__user=user,
+    ).first()
+    if existing is not None:
+        return existing
+
+    try:
+        with transaction.atomic():
+            bot = get_ai_bot()
+            conv = Conversation.objects.create(
+                name=settings.AI_ROOM_NAME,
+                type=Conversation.TYPE_DIRECT,
+                visibility=Conversation.VISIBILITY_PRIVATE,
+                description='Trợ lý AI riêng của bạn',
+                is_ai=True,
+                created_by=bot,
+            )
+            ConversationMember.objects.create(
+                conversation=conv, user=user, role=ConversationMember.ROLE_OWNER,
+            )
+            ConversationMember.objects.create(
+                conversation=conv, user=bot, role=ConversationMember.ROLE_MEMBER,
+            )
+        return conv
+    except Exception as exc:
+        # Không tạo được phòng AI thì thôi, danh sách phòng vẫn trả bình thường.
+        logger.error('ai.room_create_failed', user_id=user.pk, error=str(exc))
+        return None
+
+
+def is_ai_conversation(conversation_id):
+    return Conversation.objects.filter(pk=conversation_id, is_ai=True).exists()
+
+
+def ai_history(conversation_id, limit=None, exclude_id=None):
+    """
+    Vài tin gần nhất của phòng, đổi sang dạng (role, text) cho lớp AI.
+    Bỏ tin đã xoá và tin rỗng.
+
+    `exclude_id` là tin đang được hỏi: nó đã nằm trong bảng nhưng lớp AI
+    nhận nó qua tham số `prompt` riêng, nên phải loại ở đây kẻo hỏi hai lần.
+    """
+    limit = limit or settings.AI_CONTEXT_MESSAGES
+    bot_username = settings.AI_BOT_USERNAME
+    queryset = (
+        Message.objects
+        .filter(conversation_id=conversation_id, is_deleted=False)
+        .exclude(content='')
+    )
+    if exclude_id is not None:
+        queryset = queryset.exclude(pk=exclude_id)
+    rows = list(
+        queryset
+        .select_related('sender')
+        .order_by('-sequence_number')[:limit]
+    )
+    rows.reverse()
+    return [
+        ('assistant' if m.sender.username == bot_username else 'user', m.content)
+        for m in rows
+    ]
+
+
+def create_ai_placeholder(conversation_id):
+    """
+    Tạo sẵn một message rỗng của bot để có id và sequence_number trước khi
+    chữ bắt đầu chảy về. Trả payload đã serialize, hoặc None nếu hỏng.
+    """
+    try:
+        bot = get_ai_bot()
+        with transaction.atomic():
+            sequence = _next_sequence(conversation_id)
+            message = Message.objects.create(
+                conversation_id=conversation_id,
+                sender=bot,
+                sequence_number=sequence,
+                content='',
+            )
+        message = Message.objects.select_related('sender').get(pk=message.pk)
+        return serialize_message(message, reactions=[])
+    except Exception as exc:
+        logger.error('ai.placeholder_failed', error=str(exc))
+        return None
+
+
+def finalize_ai_message(message_id, content):
+    """Ghi nội dung hoàn chỉnh vào message của bot."""
+    try:
+        Message.objects.filter(pk=message_id).update(content=content)
+        return True
+    except Exception as exc:
+        logger.error('ai.finalize_failed', message_id=message_id, error=str(exc))
+        return False

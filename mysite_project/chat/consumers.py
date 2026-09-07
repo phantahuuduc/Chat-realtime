@@ -21,7 +21,7 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.conf import settings
 
-from . import linkpreview, presence, services
+from . import assistant, linkpreview, presence, services
 from .broadcast import safe_group_send
 from .middleware import WS_SUBPROTOCOL
 from .models import Conversation, PresenceStatus
@@ -287,6 +287,13 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         if url:
             asyncio.ensure_future(self._attach_preview(message['id'], url))
 
+        # Trợ lý AI chạy SAU khi tin của người dùng đã lưu và phát đi. Nếu
+        # lớp AI hỏng, tin nhắn vẫn nằm đúng chỗ và không ai biết có gì sai.
+        if assistant.is_enabled() and await self._is_ai_room(conversation_id):
+            asyncio.ensure_future(
+                self._answer_with_ai(conversation_id, message['id'], text)
+            )
+
     # -----------------------------------------------------------------------
     # message.edited / deleted / reaction / read
     # -----------------------------------------------------------------------
@@ -375,6 +382,58 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             )},
             self.channel_layer,
         )
+
+    async def _answer_with_ai(self, conversation_id, prompt_message_id, prompt):
+        """
+        Sinh câu trả lời của trợ lý và phát từng mẩu chữ.
+
+        Bọc toàn bộ trong try/except: một task nền chết lặng lẽ còn hơn làm
+        vỡ consumer đang phục vụ chat người-người.
+        """
+        group = Conversation.group_name_for(conversation_id)
+        try:
+            placeholder = await self._ai_placeholder(conversation_id)
+            if placeholder is None:
+                return
+
+            await safe_group_send(group, {
+                'type': 'fanout',
+                'envelope': envelope('message.stream', {
+                    'message': placeholder,
+                    'chunk': '',
+                    'done': False,
+                }),
+            }, self.channel_layer)
+
+            history = await self._ai_history(conversation_id, prompt_message_id)
+            parts = []
+            async for chunk in assistant.stream_reply(history, prompt):
+                parts.append(chunk)
+                await safe_group_send(group, {
+                    'type': 'fanout',
+                    'envelope': envelope('message.stream', {
+                        'message_id': placeholder['id'],
+                        'conversation_id': conversation_id,
+                        'chunk': chunk,
+                        'done': False,
+                    }),
+                }, self.channel_layer)
+
+            content = ''.join(parts).strip()
+            await self._ai_finalize(placeholder['id'], content)
+            await safe_group_send(group, {
+                'type': 'fanout',
+                'envelope': envelope('message.stream', {
+                    'message_id': placeholder['id'],
+                    'conversation_id': conversation_id,
+                    'chunk': '',
+                    'content': content,
+                    'done': True,
+                }),
+            }, self.channel_layer)
+
+        except Exception as exc:
+            logger.error('ai.answer_failed', error=str(exc), conversation_id=conversation_id)
 
     async def _attach_preview(self, message_id, url):
         try:
@@ -555,6 +614,22 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     @database_sync_to_async
     def _toggle_reaction(self, message_id, emoji):
         return services.toggle_reaction(message_id, self.user, emoji)
+
+    @database_sync_to_async
+    def _is_ai_room(self, conversation_id):
+        return services.is_ai_conversation(conversation_id)
+
+    @database_sync_to_async
+    def _ai_history(self, conversation_id, exclude_id):
+        return services.ai_history(conversation_id, exclude_id=exclude_id)
+
+    @database_sync_to_async
+    def _ai_placeholder(self, conversation_id):
+        return services.create_ai_placeholder(conversation_id)
+
+    @database_sync_to_async
+    def _ai_finalize(self, message_id, content):
+        return services.finalize_ai_message(message_id, content)
 
     @database_sync_to_async
     def _pin_message(self, message_id, pinned):

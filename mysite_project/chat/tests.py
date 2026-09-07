@@ -13,16 +13,18 @@ import threading
 import uuid
 from unittest.mock import patch
 
+from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.exceptions import ChannelFull
 from channels.testing import WebsocketCommunicator
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.db import connection as db_connection
 from django.test import TestCase, TransactionTestCase, override_settings
 from rest_framework.test import APIClient
 
-from chat import linkpreview, services
+from chat import assistant, linkpreview, services
 from chat.broadcast import sync_group_send
 from chat.consumers import ChatConsumer
 from chat.middleware import _extract_token
@@ -242,6 +244,9 @@ class AuthAPITest(TestCase):
         self.assertIn(resp.status_code, [401, 403])
 
 
+# Bộ test này đếm phòng người-người, nên phải chạy độc lập với việc máy
+# chạy test có khoá AI hay không. Phòng AI có bộ test riêng bên dưới.
+@override_settings(AI_ASSISTANT_ENABLED=False)
 class ConversationAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -1019,3 +1024,154 @@ class LinkPreviewTest(TestCase):
 
         services.delete_message(message['id'], user)
         self.assertIsNone(Message.objects.get(pk=message['id']).preview)
+
+
+# ===========================================================================
+# Trợ lý AI — tính năng cộng thêm
+#
+# Điều quan trọng nhất được kiểm ở đây không phải là AI trả lời hay, mà là
+# AI hỏng thì chat người-người không hề hấn gì.
+# ===========================================================================
+
+class AssistantParsingTest(TestCase):
+    """Đọc SSE và bóc chữ — phải chịu được dữ liệu rác mà không vỡ."""
+
+    def test_sse_line_parsing(self):
+        self.assertEqual(assistant._iter_sse_lines('data: {"a": 1}'), {'a': 1})
+        for rac in ['', '   ', ': keep-alive', 'event: x', 'data: [DONE]',
+                    'data:', 'data: {khong-phai-json']:
+            self.assertIsNone(assistant._iter_sse_lines(rac), rac)
+
+    def test_text_extraction(self):
+        payload = {'candidates': [{'content': {'parts': [
+            {'text': 'xin '}, {'text': 'chào'},
+        ]}}]}
+        self.assertEqual(assistant._extract_text(payload), 'xin chào')
+
+    def test_text_extraction_survives_unknown_shapes(self):
+        for la in [{}, {'candidates': []}, {'candidates': [{}]},
+                   {'candidates': [{'content': {'parts': ['chuoi tran']}}]}]:
+            self.assertEqual(assistant._extract_text(la), '')
+
+    def test_status_classification(self):
+        self.assertEqual(assistant._classify_status(401), 'auth')
+        self.assertEqual(assistant._classify_status(403), 'auth')
+        self.assertEqual(assistant._classify_status(404), 'model')
+        self.assertEqual(assistant._classify_status(429), 'quota')
+        self.assertEqual(assistant._classify_status(500), 'busy')
+        self.assertEqual(assistant._classify_status(503), 'busy')
+
+    def test_request_alternates_roles_and_appends_prompt(self):
+        _, _, body = assistant._build_request(
+            [('user', 'câu cũ'), ('assistant', 'đáp cũ')], 'câu mới',
+        )
+        self.assertEqual(
+            [c['role'] for c in body['contents']], ['user', 'model', 'user'],
+        )
+        self.assertEqual(body['contents'][-1]['parts'][0]['text'], 'câu mới')
+
+
+class AssistantFallbackTest(TestCase):
+    """Mọi lỗi phải thành một câu xin lỗi, không bao giờ raise."""
+
+    @staticmethod
+    def _collect(history, prompt):
+        async def run():
+            return [chunk async for chunk in assistant.stream_reply(history, prompt)]
+        return async_to_sync(run)()
+
+    @override_settings(AI_ASSISTANT_ENABLED=False)
+    def test_disabled_yields_polite_notice(self):
+        self.assertEqual(self._collect([], 'chào'),
+                         [assistant.FALLBACK_MESSAGES['disabled']])
+
+    @override_settings(AI_ASSISTANT_ENABLED=True)
+    def test_empty_prompt_yields_notice(self):
+        self.assertEqual(self._collect([], '   '),
+                         [assistant.FALLBACK_MESSAGES['empty']])
+
+    @override_settings(AI_ASSISTANT_ENABLED=True, AI_API_URL='http://127.0.0.1:1',
+                       AI_API_KEY='x', AI_REQUEST_TIMEOUT=2)
+    def test_unreachable_provider_yields_notice(self):
+        """Không có ai nghe ở cổng đó — phải trả lời tử tế chứ không vỡ."""
+        self.assertEqual(self._collect([], 'chào'),
+                         [assistant.FALLBACK_MESSAGES['network']])
+
+
+@override_settings(AI_ASSISTANT_ENABLED=False)
+class AssistantDisabledIsInvisibleTest(TestCase):
+    """Tắt AI thì app phải giống hệt như chưa từng có tính năng này."""
+
+    def setUp(self):
+        self.user = User.objects.create_user('ai_off_user', password='pass123')
+        self.client = APIClient()
+        resp = self.client.post('/api/auth/login/', {
+            'username': 'ai_off_user', 'password': 'pass123',
+        })
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access_token"]}')
+
+    def test_no_ai_room_is_created(self):
+        self.assertIsNone(services.ensure_ai_conversation(self.user))
+        self.assertFalse(Conversation.objects.filter(is_ai=True).exists())
+
+    def test_room_list_has_no_ai_room(self):
+        Conversation.objects.create(name='Phòng AI cũ', type='direct', is_ai=True)
+        resp = self.client.get('/api/conversations/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([c for c in resp.data['results'] if c['is_ai']], [])
+
+
+@override_settings(AI_ASSISTANT_ENABLED=True)
+class AssistantConversationTest(TestCase):
+    """Phòng AI: mỗi người một phòng, ghim đầu danh sách."""
+
+    def setUp(self):
+        self.user = User.objects.create_user('ai_on_user', password='pass123')
+        self.client = APIClient()
+        resp = self.client.post('/api/auth/login/', {
+            'username': 'ai_on_user', 'password': 'pass123',
+        })
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {resp.data["access_token"]}')
+
+    def test_room_is_created_once_per_user(self):
+        first = services.ensure_ai_conversation(self.user)
+        second = services.ensure_ai_conversation(self.user)
+        self.assertEqual(first.pk, second.pk)
+        self.assertTrue(first.is_ai)
+        self.assertEqual(Conversation.objects.filter(is_ai=True).count(), 1)
+
+    def test_bot_account_cannot_be_logged_into(self):
+        services.ensure_ai_conversation(self.user)
+        bot = User.objects.get(username=settings.AI_BOT_USERNAME)
+        self.assertFalse(bot.is_active)
+        self.assertFalse(bot.has_usable_password())
+
+    def test_room_is_pinned_first_in_list(self):
+        thuong = Conversation.objects.create(name='Phòng thường', type='group')
+        ConversationMember.objects.create(conversation=thuong, user=self.user, role='owner')
+        resp = self.client.get('/api/conversations/')
+        phong = resp.data['results']
+        self.assertGreater(len(phong), 1)
+        self.assertTrue(phong[0]['is_ai'])
+
+    def test_history_maps_roles_and_drops_current_question(self):
+        conv = services.ensure_ai_conversation(self.user)
+        bot = User.objects.get(username=settings.AI_BOT_USERNAME)
+        services.create_message(conv.id, self.user, 'câu cũ', uuid.uuid4())
+        services.create_message(conv.id, bot, 'đáp cũ', uuid.uuid4())
+        current, _ = services.create_message(conv.id, self.user, 'câu mới', uuid.uuid4())
+
+        self.assertEqual(
+            services.ai_history(conv.id, exclude_id=current['id']),
+            [('user', 'câu cũ'), ('assistant', 'đáp cũ')],
+        )
+
+    def test_placeholder_is_finalized_with_answer(self):
+        conv = services.ensure_ai_conversation(self.user)
+        placeholder = services.create_ai_placeholder(conv.id)
+        self.assertEqual(placeholder['content'], '')
+
+        services.finalize_ai_message(placeholder['id'], 'câu trả lời')
+        self.assertEqual(
+            Message.objects.get(pk=placeholder['id']).content, 'câu trả lời',
+        )

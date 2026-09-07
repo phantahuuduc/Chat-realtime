@@ -347,6 +347,36 @@ HEARTBEAT_INTERVAL = 20          # client ping mỗi 20s
 PRESENCE_AWAY_TIMEOUT = 45       # 45s không heartbeat → away
 PRESENCE_OFFLINE_TIMEOUT = 90    # 90s không heartbeat → offline
 
+# =============================================================================
+# Trợ lý AI — TÍNH NĂNG CỘNG THÊM
+#
+# Không có khoá, khoá sai, hết quota hay tắt cờ -> AI_ASSISTANT_ENABLED = False.
+# Khi đó phòng AI bị ẩn hoàn toàn khỏi danh sách và không có đường code nào của
+# chat người-người chạm tới lớp AI. App chạy y như chưa từng có tính năng này.
+# =============================================================================
+
+AI_API_KEY = os.environ.get('AI_API_KEY', '')
+AI_ASSISTANT_ENABLED = (
+    os.environ.get('AI_ASSISTANT_ENABLED', 'True').lower() in ('true', '1', 'yes')
+    and bool(AI_API_KEY)
+)
+
+# Nhà cung cấp mặc định: Google Gemini (có bậc miễn phí).
+# Đổi nhà cung cấp = đổi 3 biến này, không đụng phần còn lại của app.
+AI_API_URL = os.environ.get(
+    'AI_API_URL',
+    'https://generativelanguage.googleapis.com/v1beta/models',
+)
+AI_MODEL = os.environ.get('AI_MODEL', 'gemini-flash-lite-latest')
+AI_REQUEST_TIMEOUT = 60          # giây, cả vòng đời một câu trả lời
+AI_MAX_OUTPUT_TOKENS = 2048
+AI_CONTEXT_MESSAGES = 20         # số tin nhắn gần nhất đưa vào ngữ cảnh
+AI_MAX_INPUT_CHARS = 4000        # chặn tin nhắn quá dài trước khi gọi API
+
+AI_BOT_USERNAME = 'cr7-ai'
+AI_BOT_DISPLAY_NAME = 'CR7 AI'
+AI_ROOM_NAME = 'CR7 AI'
+
 # Xem trước liên kết (mục 7.5)
 LINK_PREVIEW_TIMEOUT = 3         # giây, fetch quá thì bỏ qua
 LINK_PREVIEW_CACHE_TTL = 86400   # cache Redis 24h

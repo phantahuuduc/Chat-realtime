@@ -108,6 +108,34 @@
 - ✅ **Message animations** — Slide-in effect cho tin nhắn mới
 - ✅ **Auto-reconnect** — Tự nối lại sau 3 giây khi mất kết nối
 
+### Trợ lý AI (tuỳ chọn)
+- ✅ **Phòng riêng ghim đầu sidebar** — biểu tượng quả bóng, mỗi người một phòng, người khác không thấy
+- ✅ **Trả lời theo dòng (streaming)** — chữ hiện dần qua sự kiện `message.stream`
+- ✅ **Nhớ ngữ cảnh** — gửi kèm 20 lượt gần nhất của chính phòng đó
+- ✅ **Màn hình khởi đầu** — 6 thẻ gợi ý bấm được
+- ✅ **Hỏng thì im lặng** — hết quota / sai khoá / mất mạng đều thành một câu xin lỗi tử tế
+
+> **Đây là tính năng cộng thêm.** Không đặt `AI_API_KEY` thì `AI_ASSISTANT_ENABLED`
+> tự thành `False`: phòng AI không được tạo, không hiện trong danh sách, và toàn bộ
+> chat người-người chạy y như khi chưa từng có tính năng này. Xem
+> `AssistantDisabledIsInvisibleTest` trong `chat/tests.py`.
+
+**Bật trợ lý** — khoá Google Gemini có bậc miễn phí, không cần thẻ tín dụng:
+
+1. Lấy khoá tại https://aistudio.google.com/apikey
+2. Thêm vào `.env`:
+   ```
+   AI_API_KEY=khoa-cua-ban
+   AI_ASSISTANT_ENABLED=True
+   AI_MODEL=gemini-flash-lite-latest
+   ```
+3. `docker compose restart web`
+
+**Đổi nhà cung cấp** — toàn bộ phần phụ thuộc nhà cung cấp nằm trong hai hàm
+`_build_request` và `_extract_text` của `chat/assistant.py`, cộng ba biến
+`AI_API_URL` / `AI_MODEL` / `AI_API_KEY`. Không có chỗ nào khác trong app biết
+mình đang gọi Gemini.
+
 ---
 
 ## 🚀 Cài đặt & Chạy
@@ -297,6 +325,7 @@ Mọi message hai chiều dùng đúng một cấu trúc:
 {"type": "message.pinned",   "payload": {"message_id": 42, "is_pinned": true, "pinned_by": "duc"}}
 {"type": "message.unpinned", "payload": {"message_id": 42, "is_pinned": false}}
 {"type": "message.preview",  "payload": {"message_id": 42, "preview": {"url": "...", "title": "...", "image": "..."}}}
+{"type": "message.stream",   "payload": {"message_id": 42, "chunk": "chữ", "done": false}}  // trợ lý AI
 {"type": "message.read",     "payload": {"conversation_id": 1, "user_id": 2, "sequence_number": 42}}
 {"type": "typing.start"}     {"type": "typing.stop"}
 {"type": "presence.update",  "payload": {"user_id": 2, "status": "online"}}

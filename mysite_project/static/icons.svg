@@ -95,6 +95,13 @@
       <path d="M16.6 12v3M19.2 12v2.2" />
     </symbol>
 
+    <!-- Quả bóng đá — avatar của phòng trợ lý AI -->
+    <symbol id="icon-ball" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9.2" />
+      <path d="M12 6.6 15.9 9.4 14.4 14h-4.8L8.1 9.4 12 6.6Z" />
+      <path d="M12 2.8v3.8M4.1 10.6 8.1 9.4M19.9 10.6 15.9 9.4M7.6 20.1 9.6 14M16.4 20.1 14.4 14" />
+    </symbol>
+
     <symbol id="icon-globe" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="8.2" />
       <path d="M3.8 12h16.4" />

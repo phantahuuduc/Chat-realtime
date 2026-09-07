@@ -1381,3 +1381,85 @@
 }
 
 .toast .btn-text { flex: none; font-size: var(--fs-xs); }
+
+/* =====================================================================
+   Trợ lý AI — phòng ghim đầu, màn hình khởi đầu, con trỏ đang gõ
+   ===================================================================== */
+
+.room-row--ai .avatar {
+  border-color: var(--accent);
+  color: var(--accent-bright);
+  background: radial-gradient(90% 90% at 30% 20%, rgba(201, 162, 39, .2), transparent 70%);
+}
+
+.room-row--ai .room-row__name { color: var(--accent-bright); }
+
+.msg__caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--accent-bright);
+  vertical-align: text-bottom;
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+
+.ai-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12vh var(--sp-4) 0;
+  text-align: center;
+}
+
+.ai-welcome__mark {
+  width: 44px;
+  height: 44px;
+  color: var(--accent-bright);
+  filter: drop-shadow(0 0 6px rgba(247, 224, 137, .8));
+}
+
+.ai-welcome__title { margin-top: var(--sp-4); font-size: var(--fs-lg); }
+
+.ai-welcome__sub {
+  margin-top: var(--sp-2);
+  max-width: 420px;
+  font-size: var(--fs-sm);
+  color: var(--fg-1);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
+}
+
+.ai-welcome__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-2);
+  width: 100%;
+  max-width: 520px;
+  margin-top: var(--sp-5);
+}
+
+.ai-card {
+  padding: var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-glass);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-size: var(--fs-sm);
+  color: var(--fg-0);
+  text-align: left;
+  transition:
+    border-color var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.ai-card:hover {
+  border-color: var(--accent);
+  color: var(--accent-bright);
+  transform: translateY(-2px);
+}

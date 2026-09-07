@@ -29,5 +29,8 @@ structlog==26.1.0
 # Error Tracking
 sentry-sdk==2.68.1
 
+# Trợ lý AI — client HTTP bất đồng bộ có stream
+httpx==0.28.1
+
 # Configuration
 python-dotenv==1.2.3
